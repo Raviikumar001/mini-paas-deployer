@@ -1,0 +1,60 @@
+name: brimble
+
+networks:
+  net:
+    driver: bridge
+    name: brimble_net   # explicit name so DOCKER_NETWORK=brimble_net always resolves
+
+volumes:
+  buildkit_cache:
+
+services:
+  caddy:
+    image: caddy:2.11
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "2019:2019"   # admin API — backend patches routes here
+    volumes:
+      - ./caddy/config.json:/config/caddy.json:ro
+    networks:
+      - net
+    command: caddy run --config /config/caddy.json
+    depends_on:
+      - backend
+      - frontend
+
+  buildkit:
+    image: moby/buildkit:latest
+    container_name: buildkit   # fixed name so BUILDKIT_HOST=docker-container://buildkit resolves
+    restart: unless-stopped
+    privileged: true
+    networks:
+      - net
+    volumes:
+      - buildkit_cache:/var/lib/buildkit
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    networks:
+      - net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    environment:
+      DATABASE_PATH: /data/db.sqlite
+      CADDY_ADMIN: http://caddy:2019
+      DOCKER_NETWORK: brimble_net
+      BUILDKIT_HOST: docker-container://buildkit
+      PORT: 3001
+    depends_on:
+      - buildkit
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    networks:
+      - net

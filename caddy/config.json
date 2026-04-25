@@ -1,0 +1,35 @@
+{
+  "admin": {
+    "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":80"],
+          "routes": [
+            {
+              "@id": "api",
+              "match": [{ "path": ["/api/*"] }],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [{ "dial": "backend:3001" }]
+                }
+              ]
+            },
+            {
+              "@id": "frontend",
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "upstreams": [{ "dial": "frontend:5173" }]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
