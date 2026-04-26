@@ -7,7 +7,7 @@ import {
   listDeployments,
   updateDeployment,
 } from '../db/schema.js'
-import { runPipeline } from '../services/pipeline.js'
+import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
 import { stopAndRemove } from '../services/runner.js'
 import { removeRoute } from '../services/caddy.js'
 
@@ -69,7 +69,7 @@ deploymentRoutes.post('/:id/redeploy', async (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
 
-  if (dep.status === 'building' || dep.status === 'deploying') {
+  if (dep.status === 'building' || dep.status === 'deploying' || dep.status === 'redeploying') {
     return c.json({ error: 'deployment already in progress' }, 409)
   }
   if (!dep.source_url) {
@@ -80,24 +80,15 @@ deploymentRoutes.post('/:id/redeploy', async (c) => {
   const body = await c.req.json<{ envVars?: Record<string, string> }>().catch(() => ({ envVars: undefined }))
   const envVars = body.envVars ?? (JSON.parse(dep.env_vars || '{}') as Record<string, string>)
 
-  // Stop the old container and remove its route before rebuilding
-  if (dep.container_name) {
-    await Promise.allSettled([
-      stopAndRemove(dep.container_name),
-      removeRoute(dep.id),
-    ])
-  }
-
+  // Preserve url/container_name so the running app stays live during the build
   updateDeployment(dep.id, {
-    status: 'pending',
+    status: 'redeploying',
     env_vars: JSON.stringify(envVars),
     error: null,
-    container_id: null,
-    container_name: null,
-    url: null,
   })
 
-  runPipeline(dep.id, dep.source_url, dep.name, envVars).catch((err) => {
+  const oldContainerName = dep.container_name ?? ''
+  runRedeployPipeline(dep.id, dep.source_url, dep.name, oldContainerName, envVars).catch((err) => {
     updateDeployment(dep.id, { status: 'failed', error: String(err) })
   })
 

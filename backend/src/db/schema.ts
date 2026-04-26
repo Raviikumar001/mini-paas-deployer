@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 
 export type DeploymentStatus =
-  | 'pending' | 'building' | 'deploying' | 'running' | 'failed' | 'stopped'
+  | 'pending' | 'building' | 'deploying' | 'running' | 'redeploying' | 'failed' | 'stopped'
 
 export interface Deployment {
   id: string

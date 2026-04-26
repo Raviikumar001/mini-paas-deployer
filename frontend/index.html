@@ -18,6 +18,10 @@
       ::-webkit-scrollbar { width: 4px; }
       ::-webkit-scrollbar-track { background: transparent; }
       ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50%       { opacity: 0.4; transform: scale(0.75); }
+      }
     </style>
   </head>
   <body>

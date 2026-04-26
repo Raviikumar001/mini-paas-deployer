@@ -3,15 +3,16 @@ import type { Deployment, DeploymentStatus } from '../api/client'
 import { useDeleteDeployment, useRedeployment } from '../hooks/useDeployments'
 import { LogPanel } from './LogPanel'
 
-const ACTIVE = new Set<DeploymentStatus>(['pending', 'building', 'deploying'])
+const ACTIVE = new Set<DeploymentStatus>(['pending', 'building', 'deploying', 'redeploying'])
 
 const STATUS_STYLE: Record<DeploymentStatus, CSSProperties> = {
-  pending:   { background: '#1e1e1e', color: '#888' },
-  building:  { background: '#2d1f00', color: '#f59e0b' },
-  deploying: { background: '#0d1f3c', color: '#60a5fa' },
-  running:   { background: '#0d2318', color: '#4ade80' },
-  failed:    { background: '#2d0f0f', color: '#f87171' },
-  stopped:   { background: '#1a1a1a', color: '#555' },
+  pending:     { background: '#1e1e1e', color: '#888' },
+  building:    { background: '#2d1f00', color: '#f59e0b' },
+  deploying:   { background: '#0d1f3c', color: '#60a5fa' },
+  running:     { background: '#0d2318', color: '#4ade80' },
+  redeploying: { background: '#1a0d3c', color: '#a78bfa' },
+  failed:      { background: '#2d0f0f', color: '#f87171' },
+  stopped:     { background: '#1a1a1a', color: '#555' },
 }
 
 function timeAgo(iso: string): string {
@@ -87,10 +88,16 @@ export function DeploymentRow({ deployment: dep }: Props) {
           style={{ alignItems: 'center', display: 'flex', flexShrink: 0, gap: 6 }}
           onClick={(e) => e.stopPropagation()}
         >
-          {dep.status === 'running' && dep.url && (
+          {(dep.status === 'running' || dep.status === 'redeploying') && dep.url && (
             <a href={dep.url} target="_blank" rel="noopener noreferrer" style={linkBtnStyle}>
               Open ↗
             </a>
+          )}
+          {dep.status === 'redeploying' && (
+            <span style={rebuildingBadgeStyle}>
+              <span style={pulseDotStyle} />
+              rebuilding
+            </span>
           )}
           {canRedeploy && (
             <button
@@ -291,4 +298,26 @@ const envKeyStyle: CSSProperties = {
 
 const envValStyle: CSSProperties = {
   padding: '8px 16px 8px 0',
+}
+
+const rebuildingBadgeStyle: CSSProperties = {
+  alignItems: 'center',
+  background: '#1a0d3c',
+  border: '1px solid #2d1a5c',
+  borderRadius: 6,
+  color: '#a78bfa',
+  display: 'flex',
+  fontSize: 11,
+  fontWeight: 500,
+  gap: 5,
+  padding: '4px 9px',
+}
+
+const pulseDotStyle: CSSProperties = {
+  animation: 'pulse 1.4s ease-in-out infinite',
+  background: '#a78bfa',
+  borderRadius: '50%',
+  flexShrink: 0,
+  height: 6,
+  width: 6,
 }

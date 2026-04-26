@@ -49,6 +49,32 @@ export async function addRoute(
   await caddyPost('/config/apps/http/servers/srv0/routes', route)
 }
 
+// ── updateRoute ───────────────────────────────────────────────────────────────
+// Swaps the upstream dial address of an existing route.
+// We target only the dial string rather than replacing the whole route object —
+// replacing the route via PUT /id/<tag> causes Caddy to see a duplicate @id
+// (old index entry + new object both carry the same tag during validation).
+
+export async function updateRoute(
+  deploymentId: string,
+  containerName: string,
+  port: number,
+): Promise<void> {
+  const res = await fetch(
+    `${CADDY_ADMIN}/id/dep-${deploymentId}/handle/0/upstreams/0/dial`,
+    {
+      method: 'PATCH',
+      headers: HEADERS,
+      body: JSON.stringify(`${containerName}:${port}`),
+    },
+  )
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Caddy updateRoute failed (${res.status}): ${text}`)
+  }
+}
+
 // ── removeRoute ───────────────────────────────────────────────────────────────
 
 export async function removeRoute(deploymentId: string): Promise<void> {

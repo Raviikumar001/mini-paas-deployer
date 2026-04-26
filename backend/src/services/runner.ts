@@ -51,7 +51,7 @@ export async function stopAndRemove(containerName: string): Promise<void> {
 export async function waitForContainer(
   host: string,
   port: number,
-  timeoutMs = 30_000,
+  timeoutMs = 60_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
 
