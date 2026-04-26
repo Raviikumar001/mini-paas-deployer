@@ -79,8 +79,8 @@ Log streaming is one-directional (server → client). SSE is simpler, works nati
 **Caddy JSON config (not Caddyfile)**  
 The JSON admin API lets us insert and delete routes at runtime without a reload. Each deployment gets a route with an `@id` tag so deletion is a single `DELETE /id/dep-<id>` call.
 
-**TCP BuildKit instead of `docker-container://`**  
-`docker-container://buildkit` works by shelling out `docker exec` for every build request — that's three moving parts (Docker socket → Docker daemon → buildkit exec). With `tcp://buildkit:1234`, the backend connects to BuildKit directly over the compose network. One hop, no Docker socket needed for the build path.
+**`docker-container://buildkit` for BuildKit**  
+Railpack uses the Docker socket to exec into the named `buildkit` container and connect to its unix socket — no TLS certificates required. The TCP `tcp://` scheme is buildkitd's default gRPC listener which requires mTLS in recent versions; `docker-container://` avoids that entirely and is Railpack's own recommended approach.
 
 **`--cache-key <repo-name>` on every build**  
 Railpack/BuildKit keyed caches are per-repo by default through this flag. A second deploy of the same repo reuses cached layers with no extra infrastructure.
@@ -103,7 +103,7 @@ Without this, Caddy is configured to route to a container that hasn't finished b
 | `DATABASE_PATH` | `/data/db.sqlite` | SQLite file path |
 | `CADDY_ADMIN` | `http://caddy:2019` | Caddy admin API base URL |
 | `DOCKER_NETWORK` | `brimble_net` | Network deployed containers join |
-| `BUILDKIT_HOST` | `tcp://buildkit:1234` | BuildKit daemon address |
+| `BUILDKIT_HOST` | `docker-container://buildkit` | BuildKit daemon address |
 | `PORT` | `3001` | Backend port |
 
 All have sensible defaults — no `.env` file needed to run.

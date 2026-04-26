@@ -32,8 +32,6 @@ services:
       - net
     volumes:
       - buildkit_cache:/var/lib/buildkit
-    # Expose TCP so backend reaches BuildKit directly without a docker-exec round-trip
-    command: buildkitd --addr tcp://0.0.0.0:1234 --addr unix:///run/buildkit/buildkitd.sock
 
   backend:
     build:
@@ -48,7 +46,7 @@ services:
       DATABASE_PATH: /data/db.sqlite
       CADDY_ADMIN: http://caddy:2019
       DOCKER_NETWORK: brimble_net
-      BUILDKIT_HOST: tcp://buildkit:1234
+      BUILDKIT_HOST: docker-container://buildkit
       PORT: 3001
     depends_on:
       - caddy

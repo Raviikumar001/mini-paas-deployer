@@ -26,7 +26,8 @@ export async function runPipeline(
     updateDeployment(deploymentId, { app_port: appPort })
 
     // ── 3. Build image ────────────────────────────────────────────────────────
-    const imageTag = `brimble-${deploymentId}:latest`
+    const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const imageTag = `brimble-${id}:latest`
     await buildImage(srcPath, imageTag, deploymentId, name)
     updateDeployment(deploymentId, { image_tag: imageTag })
 
@@ -34,7 +35,7 @@ export async function runPipeline(
     emitStatus(deploymentId, 'deploying')
     updateDeployment(deploymentId, { status: 'deploying' })
 
-    const containerName = `dep-${deploymentId}`
+    const containerName = `dep-${id}`
     await stopAndRemove(containerName).catch(() => {}) // safe no-op on first deploy
 
     const containerId = await runContainer(containerName, imageTag, appPort)

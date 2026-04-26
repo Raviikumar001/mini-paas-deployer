@@ -87,7 +87,7 @@ export async function buildImage(
     deploymentId,
     {
       ...process.env,
-      BUILDKIT_HOST: process.env.BUILDKIT_HOST ?? 'tcp://buildkit:1234',
+      BUILDKIT_HOST: process.env.BUILDKIT_HOST ?? 'docker-container://buildkit',
     },
   )
 

@@ -1,6 +1,7 @@
 {
   "admin": {
-    "listen": "0.0.0.0:2019"
+    "listen": "0.0.0.0:2019",
+    "origins": ["", "caddy:2019", "localhost:2019"]
   },
   "apps": {
     "http": {
@@ -20,6 +21,7 @@
             },
             {
               "@id": "frontend",
+              "match": [{ "not": [{ "path": ["/p/*"] }] }],
               "handle": [
                 {
                   "handler": "reverse_proxy",
