@@ -38,7 +38,7 @@ Or use any public Node.js/Go/Python repo that reads `PORT` from the environment 
 Browser
   └── Caddy :80
         ├── /api/*       → backend:3001       (Hono API)
-  ├── <subdomain>.localhost → dep-<id>:PORT (patched live via Caddy admin API)
+    ├── <subdomain>.localhost → dep-<id>:PORT (patched live via Caddy admin API)
         └── /*           → frontend:5173      (Vite dev server)
 
 Backend (Hono + TypeScript + SQLite)
@@ -129,3 +129,27 @@ All have sensible defaults — no `.env` file needed to run.
 - Dynamic Caddy ingress updates through Caddy Admin API for deployed app host routes.
 - Build cache reuse via Railpack cache keying.
 - End-to-end local startup with a single `docker compose up --build`.
+
+---
+
+## What I'd do with more time
+
+- **Project upload flow**: add uploaded project support alongside Git URL in the create deployment API and UI.
+- **Domain-aware URLs**: replace hardcoded `.localhost` deployment URLs with an env-driven base domain (for non-local hosts).
+- **Build cancellation + queueing**: add cancel endpoints and a simple worker queue to prevent overlapping heavy builds on small machines.
+- **Structured build progress**: parse build output into typed step events so the UI can show phase/timing instead of plain text lines.
+- **Production frontend serving**: switch from Vite dev server in container runtime to a built static bundle served by Caddy.
+
+## What I'd rip out
+
+- **3-second global polling** in deployment list (`refetchInterval: 3_000`) and rely more on SSE-driven invalidation/state updates.
+- **Open CORS defaults** (`cors()` on `/api/*`) and replace with explicit allowed origins via environment config.
+- **`.localhost`-specific assumptions** in generated deployment URLs and host matching for routes intended for non-local environments.
+
+---
+
+## Rough time spent, and what I'd change if I had another weekend
+
+Rough time spent: **~8 hours**.
+
+With another weekend, I would prioritize: upload deploys (zip/tar), domain/TLS hardening, and a more production-ready runtime profile (build cancellation, queueing, and static frontend serving).
