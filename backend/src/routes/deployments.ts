@@ -1,7 +1,5 @@
 import { Hono } from 'hono'
 import { customAlphabet } from 'nanoid'
-
-const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
 import {
   createDeployment,
   deleteDeployment,
@@ -13,29 +11,27 @@ import { runPipeline } from '../services/pipeline.js'
 import { stopAndRemove } from '../services/runner.js'
 import { removeRoute } from '../services/caddy.js'
 
+const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
+
 export const deploymentRoutes = new Hono()
 
 // POST /api/deployments
 deploymentRoutes.post('/', async (c) => {
-  const body = await c.req.json<{ gitUrl?: string }>()
+  const body = await c.req.json<{ gitUrl?: string; envVars?: Record<string, string> }>()
 
-  if (!body.gitUrl) {
-    return c.json({ error: 'gitUrl is required' }, 400)
-  }
+  if (!body.gitUrl) return c.json({ error: 'gitUrl is required' }, 400)
 
   let url: URL
-  try {
-    url = new URL(body.gitUrl)
-  } catch {
+  try { url = new URL(body.gitUrl) } catch {
     return c.json({ error: 'invalid gitUrl' }, 400)
   }
 
+  const envVars = body.envVars ?? {}
   const name = url.pathname.split('/').filter(Boolean).pop() ?? 'deployment'
   const id = nanoid(10)
-  const deployment = createDeployment(id, name, body.gitUrl)
+  const deployment = createDeployment(id, name, body.gitUrl, envVars)
 
-  // Fire-and-forget — client follows progress via SSE
-  runPipeline(id, body.gitUrl, name).catch((err) => {
+  runPipeline(id, body.gitUrl, name, envVars).catch((err) => {
     updateDeployment(id, { status: 'failed', error: String(err) })
   })
 
@@ -58,7 +54,6 @@ deploymentRoutes.delete('/:id', async (c) => {
   if (!dep) return c.json({ error: 'not found' }, 404)
 
   if (dep.container_name) {
-    // Run both in parallel — container removal and Caddy route removal are independent
     await Promise.allSettled([
       stopAndRemove(dep.container_name),
       removeRoute(dep.id),
@@ -67,4 +62,44 @@ deploymentRoutes.delete('/:id', async (c) => {
 
   deleteDeployment(dep.id)
   return c.body(null, 204)
+})
+
+// POST /api/deployments/:id/redeploy
+deploymentRoutes.post('/:id/redeploy', async (c) => {
+  const dep = getDeployment(c.req.param('id'))
+  if (!dep) return c.json({ error: 'not found' }, 404)
+
+  if (dep.status === 'building' || dep.status === 'deploying') {
+    return c.json({ error: 'deployment already in progress' }, 409)
+  }
+  if (!dep.source_url) {
+    return c.json({ error: 'no source URL to redeploy from' }, 422)
+  }
+
+  // New env vars override stored ones; omit the field to reuse existing
+  const body = await c.req.json<{ envVars?: Record<string, string> }>().catch(() => ({ envVars: undefined }))
+  const envVars = body.envVars ?? (JSON.parse(dep.env_vars || '{}') as Record<string, string>)
+
+  // Stop the old container and remove its route before rebuilding
+  if (dep.container_name) {
+    await Promise.allSettled([
+      stopAndRemove(dep.container_name),
+      removeRoute(dep.id),
+    ])
+  }
+
+  updateDeployment(dep.id, {
+    status: 'pending',
+    env_vars: JSON.stringify(envVars),
+    error: null,
+    container_id: null,
+    container_name: null,
+    url: null,
+  })
+
+  runPipeline(dep.id, dep.source_url, dep.name, envVars).catch((err) => {
+    updateDeployment(dep.id, { status: 'failed', error: String(err) })
+  })
+
+  return c.json(getDeployment(dep.id))
 })

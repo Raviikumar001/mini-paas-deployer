@@ -89,12 +89,15 @@ export async function buildImage(
   imageTag: string,
   deploymentId: string,
   cacheKey: string,
+  envVars: Record<string, string> = {},
 ): Promise<void> {
   emitLog(deploymentId, 'system', `Building image ${imageTag}…`)
 
+  const envArgs = Object.entries(envVars).flatMap(([k, v]) => ['--env', `${k}=${v}`])
+
   await spawnStream(
     'railpack',
-    ['build', srcPath, '--name', imageTag, '--cache-key', cacheKey],
+    ['build', srcPath, '--name', imageTag, '--cache-key', cacheKey, ...envArgs],
     deploymentId,
     {
       ...process.env,

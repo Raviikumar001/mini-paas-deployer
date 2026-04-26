@@ -1,5 +1,3 @@
-// All types mirror the backend schema exactly so no translation layer is needed.
-
 export type DeploymentStatus =
   | 'pending' | 'building' | 'deploying' | 'running' | 'failed' | 'stopped'
 
@@ -12,6 +10,7 @@ export interface Deployment {
   container_name: string | null
   app_port: number
   url: string | null
+  env_vars: string   // JSON-encoded Record<string,string>
   error: string | null
   created_at: string
   updated_at: string
@@ -31,9 +30,7 @@ export interface StatusEvent {
   status: DeploymentStatus
 }
 
-export interface DoneEvent {
-  type: 'done'
-}
+export interface DoneEvent { type: 'done' }
 
 export type PipelineEvent = LogEvent | StatusEvent | DoneEvent
 
@@ -47,23 +44,29 @@ async function handle<T>(res: Response): Promise<T> {
     throw new Error(msg)
   }
   if (res.status === 204) return undefined as T
-  return res.json() as Promise<T>
+  return (await res.json()) as T
 }
 
-// Namespaced API object — easy to extend, easy to mock in tests.
 export const api = {
   deployments: {
     list: (): Promise<Deployment[]> =>
-      fetch(`${BASE}/deployments`).then(handle),
+      fetch(`${BASE}/deployments`).then(handle<Deployment[]>),
 
-    create: (gitUrl: string): Promise<Deployment> =>
+    create: (params: { gitUrl: string; envVars?: Record<string, string> }): Promise<Deployment> =>
       fetch(`${BASE}/deployments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gitUrl }),
-      }).then(handle),
+        body: JSON.stringify(params),
+      }).then(handle<Deployment>),
+
+    redeploy: (id: string, envVars?: Record<string, string>): Promise<Deployment> =>
+      fetch(`${BASE}/deployments/${id}/redeploy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ envVars }),
+      }).then(handle<Deployment>),
 
     remove: (id: string): Promise<void> =>
-      fetch(`${BASE}/deployments/${id}`, { method: 'DELETE' }).then(handle),
+      fetch(`${BASE}/deployments/${id}`, { method: 'DELETE' }).then(handle<void>),
   },
 }

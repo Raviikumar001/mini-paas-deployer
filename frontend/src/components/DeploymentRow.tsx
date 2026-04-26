@@ -1,6 +1,6 @@
 import { useState, useEffect, type CSSProperties } from 'react'
 import type { Deployment, DeploymentStatus } from '../api/client'
-import { useDeleteDeployment } from '../hooks/useDeployments'
+import { useDeleteDeployment, useRedeployment } from '../hooks/useDeployments'
 import { LogPanel } from './LogPanel'
 
 // Statuses that mean a build/deploy is actively in progress
@@ -30,6 +30,9 @@ export function DeploymentRow({ deployment: dep }: Props) {
   // Auto-expand while the pipeline is running; user can toggle after
   const [expanded, setExpanded] = useState(() => ACTIVE.has(dep.status))
   const { mutate: remove, isPending: removing } = useDeleteDeployment()
+  const { mutate: redeploy, isPending: redeploying } = useRedeployment()
+
+  const canRedeploy = dep.status === 'running' || dep.status === 'failed' || dep.status === 'stopped'
 
   useEffect(() => {
     if (ACTIVE.has(dep.status)) setExpanded(true)
@@ -76,6 +79,16 @@ export function DeploymentRow({ deployment: dep }: Props) {
             >
               {dep.url} ↗
             </a>
+          )}
+          {canRedeploy && (
+            <button
+              disabled={redeploying}
+              onClick={() => redeploy({ id: dep.id })}
+              style={{ ...btnStyle, color: '#a3e63599' }}
+              title="redeploy with same env vars"
+            >
+              ↺
+            </button>
           )}
           <button onClick={() => setExpanded((v) => !v)} style={btnStyle}>
             {expanded ? '▼ logs' : '▶ logs'}

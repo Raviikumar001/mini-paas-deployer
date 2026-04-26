@@ -1,4 +1,4 @@
-import { exec as execCb } from 'child_process'
+import { spawn, exec as execCb } from 'child_process'
 import { promisify } from 'util'
 import { createConnection } from 'net'
 
@@ -12,25 +12,41 @@ export async function runContainer(
   containerName: string,
   imageTag: string,
   appPort: number,
+  envVars: Record<string, string> = {},
 ): Promise<string> {
-  // No host-port binding — Caddy reaches containers by name over brimble_net.
-  // PORT env var is the universal contract: apps read process.env.PORT.
-  const { stdout } = await exec(
-    `docker run -d --name ${containerName} --network ${NETWORK} --env PORT=${appPort} ${imageTag}`,
-  )
-  return stdout.trim() // full container ID
+  // Use spawn (not exec) so env var values with spaces or special characters
+  // are passed as separate argv elements — no shell quoting needed.
+  const envArgs = Object.entries(envVars).flatMap(([k, v]) => ['--env', `${k}=${v}`])
+  const args = [
+    'run', '-d',
+    '--name', containerName,
+    '--network', NETWORK,
+    '--env', `PORT=${appPort}`,
+    ...envArgs,
+    imageTag,
+  ]
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn('docker', args)
+    let stdout = ''
+    let stderr = ''
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    proc.on('close', (code) =>
+      code === 0
+        ? resolve(stdout.trim())
+        : reject(new Error(`docker run failed: ${stderr.trim()}`)),
+    )
+    proc.on('error', reject)
+  })
 }
 
 export async function stopAndRemove(containerName: string): Promise<void> {
-  // docker stop sends SIGTERM, waits gracePeriod (default 10s), then SIGKILL
   await exec(`docker stop ${containerName}`).catch(() => {})
   await exec(`docker rm   ${containerName}`).catch(() => {})
 }
 
 // ── Readiness probe ───────────────────────────────────────────────────────────
-// Poll TCP until the app accepts connections before we tell Caddy to route to it.
-// Without this, the first real request arrives while the process is still
-// bootstrapping and Caddy returns a 502.
 
 export async function waitForContainer(
   host: string,

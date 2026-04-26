@@ -7,7 +7,7 @@ export function useDeployments() {
   return useQuery({
     queryKey: DEPLOYMENTS_KEY,
     queryFn: api.deployments.list,
-    refetchInterval: 3_000, // catch status changes that arrive between SSE events
+    refetchInterval: 3_000,
   })
 }
 
@@ -16,8 +16,20 @@ export function useCreateDeployment() {
   return useMutation({
     mutationFn: api.deployments.create,
     onSuccess: (created) => {
-      // Optimistically prepend so the row appears instantly
       qc.setQueryData<Deployment[]>(DEPLOYMENTS_KEY, (prev = []) => [created, ...prev])
+    },
+  })
+}
+
+export function useRedeployment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, envVars }: { id: string; envVars?: Record<string, string> }) =>
+      api.deployments.redeploy(id, envVars),
+    onSuccess: (updated) => {
+      qc.setQueryData<Deployment[]>(DEPLOYMENTS_KEY, (prev = []) =>
+        prev.map((d) => (d.id === updated.id ? updated : d)),
+      )
     },
   })
 }
@@ -27,7 +39,6 @@ export function useDeleteDeployment() {
   return useMutation({
     mutationFn: api.deployments.remove,
     onMutate: (id) => {
-      // Optimistic removal — row disappears before the server responds
       qc.setQueryData<Deployment[]>(DEPLOYMENTS_KEY, (prev = []) =>
         prev.filter((d) => d.id !== id),
       )

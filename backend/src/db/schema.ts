@@ -13,6 +13,7 @@ export interface Deployment {
   container_name: string | null
   app_port: number
   url: string | null
+  env_vars: string   // JSON-encoded Record<string, string>
   error: string | null
   created_at: string
   updated_at: string
@@ -67,6 +68,11 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_logs_deployment
       ON log_lines(deployment_id, id);
   `)
+
+  // Non-destructive migration — adds column if this is an existing DB
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN env_vars TEXT NOT NULL DEFAULT '{}'`)
+  } catch { /* column already exists */ }
 }
 
 // ── Deployment queries ────────────────────────────────────────────────────────
@@ -75,14 +81,15 @@ export function createDeployment(
   id: string,
   name: string,
   sourceUrl: string | null,
+  envVars: Record<string, string> = {},
 ): Deployment {
   const now = new Date().toISOString()
   getDb()
     .prepare(
-      `INSERT INTO deployments (id, name, source_url, status, created_at, updated_at)
-       VALUES (?, ?, ?, 'pending', ?, ?)`,
+      `INSERT INTO deployments (id, name, source_url, status, env_vars, created_at, updated_at)
+       VALUES (?, ?, ?, 'pending', ?, ?, ?)`,
     )
-    .run(id, name, sourceUrl, now, now)
+    .run(id, name, sourceUrl, JSON.stringify(envVars), now, now)
   return getDeployment(id)!
 }
 

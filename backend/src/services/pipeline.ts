@@ -11,7 +11,8 @@ const TMP = '/tmp'
 export async function runPipeline(
   deploymentId: string,
   gitUrl: string,
-  name: string, // repo name — stable across redeploys, used as build cache key
+  name: string,
+  envVars: Record<string, string> = {},
 ): Promise<void> {
   const srcPath = join(TMP, `build-${deploymentId}`)
 
@@ -28,7 +29,7 @@ export async function runPipeline(
     // ── 3. Build image ────────────────────────────────────────────────────────
     const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
     const imageTag = `brimble-${id}:latest`
-    await buildImage(srcPath, imageTag, deploymentId, name)
+    await buildImage(srcPath, imageTag, deploymentId, name, envVars)
     updateDeployment(deploymentId, { image_tag: imageTag })
 
     // ── 4. Run container ──────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ export async function runPipeline(
     const containerName = `dep-${id}`
     await stopAndRemove(containerName).catch(() => {}) // safe no-op on first deploy
 
-    const containerId = await runContainer(containerName, imageTag, appPort)
+    const containerId = await runContainer(containerName, imageTag, appPort, envVars)
     updateDeployment(deploymentId, { container_id: containerId, container_name: containerName })
 
     // ── 5. Wait for app to accept connections ─────────────────────────────────
