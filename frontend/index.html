@@ -6,22 +6,84 @@
     <title>Brimble</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet" />
     <style>
+      :root {
+        --bg-base:    #111110;
+        --bg-surface: #1a1918;
+        --bg-raised:  #232220;
+        --bg-hover:   #2a2927;
+        --bg-stripe:  #181716;
+
+        --text-primary:   #f0ede8;
+        --text-secondary: #8a8680;
+        --text-muted:     #52504d;
+
+        --border-subtle:   rgba(255,255,255,0.06);
+        --border-default:  rgba(255,255,255,0.10);
+        --border-emphasis: rgba(255,255,255,0.18);
+
+        --accent:       #e8ff47;
+        --accent-dim:   rgba(232,255,71,0.12);
+        --accent-text:  #111110;
+
+        --success: #3ecf8e;
+        --warning: #f5a623;
+        --danger:  #f56565;
+
+        --font-display: 'Sora', sans-serif;
+        --font-body:    'Sora', sans-serif;
+        --font-mono:    'IBM Plex Mono', monospace;
+      }
+
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      html, body, #root {
+        height: 100%;
+      }
+
       body {
-        font-family: 'Inter', system-ui, sans-serif;
-        background: #080808;
-        color: #e2e2e2;
+        font-family: var(--font-body);
+        background: var(--bg-base);
+        color: var(--text-primary);
         -webkit-font-smoothing: antialiased;
+        font-size: 14px;
       }
-      ::-webkit-scrollbar { width: 4px; }
+
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
       ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
-      @keyframes pulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50%       { opacity: 0.4; transform: scale(0.75); }
+      ::-webkit-scrollbar-thumb { background: var(--bg-raised); border-radius: 2px; }
+
+      *:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px var(--accent);
       }
+
+      /* ── Animations ─────────────────────────────────────────────────────── */
+      @keyframes fadeSlideIn {
+        from { opacity: 0; transform: translateX(-6px); }
+        to   { opacity: 1; transform: translateX(0); }
+      }
+
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0; }
+      }
+
+      @keyframes pulse-dot {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50%       { opacity: 0.5; transform: scale(0.75); }
+      }
+
+      .pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+
+      .nav-item { animation: fadeSlideIn 0.22s ease both; }
+      .nav-item:nth-child(1) { animation-delay: 0.02s; }
+      .nav-item:nth-child(2) { animation-delay: 0.05s; }
+      .nav-item:nth-child(3) { animation-delay: 0.08s; }
+      .nav-item:nth-child(4) { animation-delay: 0.11s; }
+      .nav-item:nth-child(5) { animation-delay: 0.14s; }
+      .nav-item:nth-child(6) { animation-delay: 0.17s; }
     </style>
   </head>
   <body>
