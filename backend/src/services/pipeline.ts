@@ -49,7 +49,7 @@ export async function runPipeline(
     emitLog(deploymentId, 'system', 'Configuring ingress…')
     await addRoute(deploymentId, containerName, appPort)
 
-    const url = `/p/${deploymentId}`
+    const url = `http://${id}.localhost`
     updateDeployment(deploymentId, { status: 'running', url })
     emitStatus(deploymentId, 'running')
     emitLog(deploymentId, 'system', `Live → ${url}`)

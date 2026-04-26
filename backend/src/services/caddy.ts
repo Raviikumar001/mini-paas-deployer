@@ -22,7 +22,6 @@ async function caddyDelete(path: string): Promise<void> {
     method: 'DELETE',
     headers: { 'Origin': CADDY_ADMIN },
   })
-  // 404 = already gone — not an error
   if (!res.ok && res.status !== 404) {
     const text = await res.text()
     throw new Error(`Caddy DELETE ${path} failed (${res.status}): ${text}`)
@@ -30,60 +29,28 @@ async function caddyDelete(path: string): Promise<void> {
 }
 
 // ── addRoute ─────────────────────────────────────────────────────────────────
-// Two routes per deployment:
-//
-// 1. App route  /p/:id  →  strip prefix  →  container
-// 2. Asset route  /_next/* (+ /favicon.ico etc.)  when Referer = /p/:id
-//    →  container (no prefix strip — Next.js serves /_next/* at its own root)
-//
-// The Referer matcher means multiple deployments can each claim /_next/* for
-// their own assets without colliding.
+// Subdomain routing: each deployment gets its own hostname (<id>.localhost).
+// The app is served at the domain root — no path stripping, no basePath
+// required, client-side navigation and all asset paths work out of the box.
 
 export async function addRoute(
   deploymentId: string,
   containerName: string,
   port: number,
 ): Promise<void> {
-  const upstream = [{ dial: `${containerName}:${port}` }]
-
-  const appRoute = {
+  const route = {
     '@id': `dep-${deploymentId}`,
-    match: [{ path: [`/p/${deploymentId}/*`, `/p/${deploymentId}`] }],
+    match: [{ host: [`${deploymentId}.localhost`] }],
     handle: [
-      { handler: 'rewrite', strip_path_prefix: `/p/${deploymentId}` },
-      { handler: 'reverse_proxy', upstreams: upstream },
+      { handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] },
     ],
   }
 
-  // Proxy root-relative assets back to the container when the Referer ties
-  // them to this specific deployment. Covers Next.js (/_next/*), CRA, Vite,
-  // and common static file conventions.
-  const assetRoute = {
-    '@id': `dep-assets-${deploymentId}`,
-    match: [{
-      path: [
-        '/_next/*',
-        '/static/*',
-        '/assets/*',
-        '/favicon.ico',
-        '/robots.txt',
-        '/manifest.json',
-      ],
-      header: { Referer: [`*localhost/p/${deploymentId}*`] },
-    }],
-    handle: [{ handler: 'reverse_proxy', upstreams: upstream }],
-  }
-
-  const base = '/config/apps/http/servers/srv0/routes'
-  await caddyPost(base, appRoute)
-  await caddyPost(base, assetRoute)
+  await caddyPost('/config/apps/http/servers/srv0/routes', route)
 }
 
 // ── removeRoute ───────────────────────────────────────────────────────────────
 
 export async function removeRoute(deploymentId: string): Promise<void> {
-  await Promise.allSettled([
-    caddyDelete(`/id/dep-${deploymentId}`),
-    caddyDelete(`/id/dep-assets-${deploymentId}`),
-  ])
+  await caddyDelete(`/id/dep-${deploymentId}`)
 }
