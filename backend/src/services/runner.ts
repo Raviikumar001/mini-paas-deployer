@@ -6,7 +6,6 @@ const exec = promisify(execCb)
 
 const NETWORK = process.env.DOCKER_NETWORK ?? 'brimble_net'
 
-// ── Container lifecycle ───────────────────────────────────────────────────────
 
 export async function runContainer(
   containerName: string,
@@ -14,8 +13,7 @@ export async function runContainer(
   appPort: number,
   envVars: Record<string, string> = {},
 ): Promise<string> {
-  // Use spawn (not exec) so env var values with spaces or special characters
-  // are passed as separate argv elements — no shell quoting needed.
+
   const envArgs = Object.entries(envVars).flatMap(([k, v]) => ['--env', `${k}=${v}`])
   const args = [
     'run', '-d',
@@ -46,7 +44,6 @@ export async function stopAndRemove(containerName: string): Promise<void> {
   await exec(`docker rm   ${containerName}`).catch(() => {})
 }
 
-// ── Readiness probe ───────────────────────────────────────────────────────────
 
 export async function waitForContainer(
   host: string,

@@ -28,9 +28,6 @@ async function caddyDelete(path: string): Promise<void> {
   }
 }
 
-// ── addRoute ─────────────────────────────────────────────────────────────────
-// subdomain is the public hostname label (e.g. "my-app-a4o0").
-// deploymentId is used only as the internal @id tag for future PATCH/DELETE.
 
 export async function addRoute(
   deploymentId: string,
@@ -49,11 +46,7 @@ export async function addRoute(
   await caddyPost('/config/apps/http/servers/srv0/routes', route)
 }
 
-// ── updateRoute ───────────────────────────────────────────────────────────────
-// Swaps the upstream dial address of an existing route.
-// We target only the dial string rather than replacing the whole route object —
-// replacing the route via PUT /id/<tag> causes Caddy to see a duplicate @id
-// (old index entry + new object both carry the same tag during validation).
+
 
 export async function updateRoute(
   deploymentId: string,
@@ -75,7 +68,7 @@ export async function updateRoute(
   }
 }
 
-// ── removeRoute ───────────────────────────────────────────────────────────────
+
 
 export async function removeRoute(deploymentId: string): Promise<void> {
   await caddyDelete(`/id/dep-${deploymentId}`)

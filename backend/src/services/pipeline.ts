@@ -8,7 +8,7 @@ import { addRoute, updateRoute } from './caddy.js'
 
 const TMP = '/tmp'
 
-// e.g. ("shopify-dashboard-v1", "a4o0486ad4") → "shopify-dashboard-v1-a4o0"
+
 function toSubdomain(name: string, id: string): string {
   const slug = name
     .toLowerCase()

@@ -15,7 +15,7 @@ const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
 
 export const deploymentRoutes = new Hono()
 
-// POST /api/deployments
+
 deploymentRoutes.post('/', async (c) => {
   const body = await c.req.json<{ gitUrl?: string; envVars?: Record<string, string> }>()
 
@@ -38,17 +38,17 @@ deploymentRoutes.post('/', async (c) => {
   return c.json(deployment, 202)
 })
 
-// GET /api/deployments
+
 deploymentRoutes.get('/', (c) => c.json(listDeployments()))
 
-// GET /api/deployments/:id
+
 deploymentRoutes.get('/:id', (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
   return c.json(dep)
 })
 
-// DELETE /api/deployments/:id
+
 deploymentRoutes.delete('/:id', async (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
@@ -64,7 +64,7 @@ deploymentRoutes.delete('/:id', async (c) => {
   return c.body(null, 204)
 })
 
-// POST /api/deployments/:id/redeploy
+
 deploymentRoutes.post('/:id/redeploy', async (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
@@ -76,11 +76,11 @@ deploymentRoutes.post('/:id/redeploy', async (c) => {
     return c.json({ error: 'no source URL to redeploy from' }, 422)
   }
 
-  // New env vars override stored ones; omit the field to reuse existing
+
   const body = await c.req.json<{ envVars?: Record<string, string> }>().catch(() => ({ envVars: undefined }))
   const envVars = body.envVars ?? (JSON.parse(dep.env_vars || '{}') as Record<string, string>)
 
-  // Preserve url/container_name so the running app stays live during the build
+
   updateDeployment(dep.id, {
     status: 'redeploying',
     env_vars: JSON.stringify(envVars),

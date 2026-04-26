@@ -4,9 +4,7 @@ import { emitLog } from '../lib/emitter.js'
 
 const exec = promisify(execCb)
 
-// ── Internal helper ───────────────────────────────────────────────────────────
-// Spawn a process, stream every stdout/stderr line to the SSE log panel,
-// and resolve/reject on exit. Reused by both git clone and railpack build.
+
 
 function spawnStream(
   cmd: string,
@@ -32,9 +30,7 @@ function spawnStream(
   })
 }
 
-// ── Git clone ─────────────────────────────────────────────────────────────────
-// Uses spawn (not exec) so the URL never touches a shell — prevents command
-// injection from a crafted git URL like "https://x.com/y$(rm -rf /)".
+
 
 export async function cloneRepo(
   url: string,
@@ -46,13 +42,7 @@ export async function cloneRepo(
   emitLog(deploymentId, 'system', 'Clone complete.')
 }
 
-// ── Port detection ────────────────────────────────────────────────────────────
-// `railpack info --format json` is best-effort; the JSON schema isn't fully
-// documented so we probe several known paths. Caller defaults to 3000 —
-// apps should always read process.env.PORT anyway.
 
-// Exported for unit testing — parses PORT from `railpack info --format json` output.
-// The JSON schema isn't fully documented so we probe several known paths.
 export function parsePortFromInfo(stdout: string): number | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,7 +54,7 @@ export function parsePortFromInfo(stdout: string): number | null {
     const n = Number(raw)
     if (raw !== undefined && !Number.isNaN(n) && n > 0) return n
   } catch {
-    // best-effort
+    // best-effort; if parsing fails or PORT is not found/invalid, we'll just use the default
   }
   return null
 }
@@ -74,7 +64,7 @@ export async function detectPort(srcPath: string): Promise<number | null> {
     const { stdout } = await exec(`railpack info --format json ${srcPath}`)
     return parsePortFromInfo(stdout)
   } catch {
-    // best-effort
+    // best-effort; if parsing fails or PORT is not found/invalid, we'll just use the default
   }
   return null
 }

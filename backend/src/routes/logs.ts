@@ -7,12 +7,7 @@ export const logsRoute = new Hono()
 
 const TERMINAL = new Set(['running', 'failed', 'stopped'])
 
-// GET /api/deployments/:id/logs — SSE
-//
-// 1. Flush persisted history immediately (scroll-back on reconnect).
-// 2. If deployment is already in a terminal state, send done and close.
-// 3. Otherwise subscribe to live events; resolve when 'done' arrives or
-//    the client disconnects — whichever comes first.
+
 logsRoute.get('/:id/logs', (c) => {
   const id = c.req.param('id')
 
@@ -47,7 +42,7 @@ logsRoute.get('/:id/logs', (c) => {
 
       logEmitter.on(id, onEvent)
 
-      // Client navigated away or closed tab
+
       stream.onAbort(() => {
         logEmitter.off(id, onEvent)
         resolve()

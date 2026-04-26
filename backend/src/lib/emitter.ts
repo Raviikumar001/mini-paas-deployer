@@ -24,14 +24,14 @@ export interface DoneEvent {
 
 export type PipelineEvent = LogEvent | StatusEvent | DoneEvent
 
-/** Persist to DB (synchronous) then broadcast to SSE subscribers. */
+
 export function emitLog(
   deploymentId: string,
   stream: LogEvent['stream'],
   message: string,
 ): void {
   const ts = new Date().toISOString()
-  insertLog(deploymentId, stream, message) // better-sqlite3 is sync — no fire-and-forget race
+  insertLog(deploymentId, stream, message)
   logEmitter.emit(deploymentId, { type: 'log', stream, message, ts } satisfies LogEvent)
 }
 
