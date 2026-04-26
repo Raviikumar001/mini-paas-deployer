@@ -12,6 +12,13 @@ docker compose up --build
 
 Open **http://localhost**, paste a public Git URL, click Deploy.
 
+### Which URL to open
+
+- Open `http://localhost`.
+- Do **not** open port `5173` directly.
+- `5173` is the frontend container's internal Vite server; Caddy is the public ingress on port `80` and routes both UI and API traffic.
+- This project is documented for local Docker Compose usage; it is not presented here as an EC2-hosted deployment.
+
 > **Prerequisites:** Docker with BuildKit support (Docker Desktop or Engine ≥ 23). No other accounts or tools required.
 
 ### Testing with the sample app
@@ -31,7 +38,7 @@ Or use any public Node.js/Go/Python repo that reads `PORT` from the environment 
 Browser
   └── Caddy :80
         ├── /api/*       → backend:3001       (Hono API)
-        ├── /p/:id/*     → dep-<id>:PORT      (patched live via Caddy admin API)
+  ├── <subdomain>.localhost → dep-<id>:PORT (patched live via Caddy admin API)
         └── /*           → frontend:5173      (Vite dev server)
 
 Backend (Hono + TypeScript + SQLite)
@@ -57,8 +64,8 @@ POST /api/deployments { gitUrl }
   railpack build --name brimble-<id>:latest --cache-key <repo-name>
   docker run -d --name dep-<id> --network brimble_net --env PORT=<port>
   TCP probe dep-<id>:<port>  ← wait until app accepts connections
-  POST caddy:2019/config/…/routes/0  ← insert route before frontend catch-all
-  status → running, url → /p/<id>
+  POST caddy:2019/config/…/routes  ← add host route for <subdomain>.localhost
+  status → running, url → http://<subdomain>.localhost
 ```
 
 Build output streams to the UI in real time over SSE. When the pipeline ends (success or failure), `{ type: "done" }` is sent and the connection closes cleanly.
@@ -110,32 +117,15 @@ All have sensible defaults — no `.env` file needed to run.
 
 ---
 
-## What I'd do with more time
+## Implemented in this repository
 
-- **Zero-downtime redeploys**: spin up the new container first, health-check it, then swap the Caddy upstream weight from old to new, then kill the old one. Caddy's load-balancer supports this without a restart.
-- **Postgres + migrations**: SQLite is fine for one process but breaks with horizontal scaling. `drizzle-orm` migrations would replace the raw `initDb()` exec.
-- **File upload (zip) deploys**: the API shape is already designed for it — the pipeline just needs a "receive zip → extract → build" path alongside the git clone path.
-- **Build cancellation**: kill the `railpack` process on DELETE of a building deployment; propagate `SIGTERM` down the process group.
-- **Structured BuildKit progress**: Railpack outputs BuildKit progress protocol text. Parsing it would give richer log segments (step names, timing, layer IDs) rather than raw lines.
-- **Container resource limits**: `docker run --memory 512m --cpus 1` to prevent a single build from starving everything else.
-
-## What I'd rip out
-
-- The `setMaxListeners(200)` call on the EventEmitter — proper connection tracking with a `Map<string, Set<listener>>` would be cleaner and not hide potential leaks.
-- The 3-second polling interval on the deployment list — if I push status changes over SSE and invalidate the query there (we do), the poll is purely a safety net. I'd either lean fully into the SSE path or drop it to 10s.
-- The Vite dev server in the frontend container — swap for a multi-stage Dockerfile that builds to `dist/` and serves via Caddy. Dev server in production is fine for a take-home but wrong for real use.
-
----
-
-## Rough time spent
-
-~8 hours across planning, implementation, and debugging.
-
----
-
-## Brimble deploy
-
-**Deployed URL:** *(link here)*
-
-**Feedback:**  
-*(write-up here — to be filled after deploying on brimble.com)*
+- One-page frontend built with Vite + TanStack Router + TanStack Query.
+- Deployment creation from Git URL (`POST /api/deployments`).
+- Deployment listing, detail fetch, delete, and redeploy endpoints.
+- Deployment status lifecycle persisted in SQLite: `pending`, `building`, `deploying`, `running`, `redeploying`, `failed`, `stopped`.
+- Real-time log streaming to the UI over SSE (`GET /api/deployments/:id/logs`) with replay of persisted logs.
+- Railpack-based image build flow (no handwritten app Dockerfiles required for deployed apps).
+- Container runtime orchestration via Docker (`run`, stop/remove, readiness wait).
+- Dynamic Caddy ingress updates through Caddy Admin API for deployed app host routes.
+- Build cache reuse via Railpack cache keying.
+- End-to-end local startup with a single `docker compose up --build`.
