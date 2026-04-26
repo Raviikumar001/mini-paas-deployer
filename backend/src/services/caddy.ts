@@ -29,18 +29,18 @@ async function caddyDelete(path: string): Promise<void> {
 }
 
 // ── addRoute ─────────────────────────────────────────────────────────────────
-// Subdomain routing: each deployment gets its own hostname (<id>.localhost).
-// The app is served at the domain root — no path stripping, no basePath
-// required, client-side navigation and all asset paths work out of the box.
+// subdomain is the public hostname label (e.g. "my-app-a4o0").
+// deploymentId is used only as the internal @id tag for future PATCH/DELETE.
 
 export async function addRoute(
   deploymentId: string,
+  subdomain: string,
   containerName: string,
   port: number,
 ): Promise<void> {
   const route = {
     '@id': `dep-${deploymentId}`,
-    match: [{ host: [`${deploymentId}.localhost`] }],
+    match: [{ host: [`${subdomain}.localhost`] }],
     handle: [
       { handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] },
     ],

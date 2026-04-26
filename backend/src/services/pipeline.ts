@@ -8,6 +8,16 @@ import { addRoute, updateRoute } from './caddy.js'
 
 const TMP = '/tmp'
 
+// e.g. ("shopify-dashboard-v1", "a4o0486ad4") → "shopify-dashboard-v1-a4o0"
+function toSubdomain(name: string, id: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+  return `${slug}-${id.slice(0, 4)}`
+}
+
 export async function runPipeline(
   deploymentId: string,
   gitUrl: string,
@@ -22,35 +32,39 @@ export async function runPipeline(
     updateDeployment(deploymentId, { status: 'building' })
     await cloneRepo(gitUrl, srcPath, deploymentId)
 
-    // ── 2. Detect port (best-effort; fallback 3000) ───────────────────────────
-    const appPort = (await detectPort(srcPath)) ?? 3000
-    updateDeployment(deploymentId, { app_port: appPort })
-
-    // ── 3. Build image ────────────────────────────────────────────────────────
+    // ── 2. Detect port + build image in parallel ──────────────────────────────
+    // detectPort only reads files already in srcPath; buildImage only reads
+    // srcPath too — they share no mutable state so can run concurrently.
     const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
     const imageTag = `brimble-${id}:latest`
-    await buildImage(srcPath, imageTag, deploymentId, name, envVars)
-    updateDeployment(deploymentId, { image_tag: imageTag })
 
-    // ── 4. Run container ──────────────────────────────────────────────────────
+    const [appPort] = await Promise.all([
+      detectPort(srcPath).then((p) => p ?? 3000),
+      buildImage(srcPath, imageTag, deploymentId, name, envVars),
+    ])
+
+    updateDeployment(deploymentId, { app_port: appPort, image_tag: imageTag })
+
+    // ── 3. Run container ──────────────────────────────────────────────────────
     emitStatus(deploymentId, 'deploying')
     updateDeployment(deploymentId, { status: 'deploying' })
 
     const containerName = `dep-${id}`
-    await stopAndRemove(containerName).catch(() => {}) // safe no-op on first deploy
+    await stopAndRemove(containerName).catch(() => {})
 
     const containerId = await runContainer(containerName, imageTag, appPort, envVars)
     updateDeployment(deploymentId, { container_id: containerId, container_name: containerName })
 
-    // ── 5. Wait for app to accept connections ─────────────────────────────────
+    // ── 4. Wait for app to accept connections ─────────────────────────────────
     emitLog(deploymentId, 'system', `Waiting for ${containerName}:${appPort}…`)
     await waitForContainer(containerName, appPort)
 
-    // ── 6. Wire up Caddy ingress ──────────────────────────────────────────────
+    // ── 5. Wire up Caddy ingress ──────────────────────────────────────────────
     emitLog(deploymentId, 'system', 'Configuring ingress…')
-    await addRoute(deploymentId, containerName, appPort)
+    const subdomain = toSubdomain(name, id)
+    await addRoute(deploymentId, subdomain, containerName, appPort)
 
-    const url = `http://${id}.localhost`
+    const url = `http://${subdomain}.localhost`
     updateDeployment(deploymentId, { status: 'running', url })
     emitStatus(deploymentId, 'running')
     emitLog(deploymentId, 'system', `Live → ${url}`)
@@ -90,33 +104,34 @@ export async function runRedeployPipeline(
     updateDeployment(deploymentId, { status: 'redeploying' })
     await cloneRepo(gitUrl, srcPath, deploymentId)
 
-    // ── 2. Detect port ────────────────────────────────────────────────────────
-    const appPort = (await detectPort(srcPath)) ?? 3000
-    updateDeployment(deploymentId, { app_port: appPort })
-
-    // ── 3. Build new image ────────────────────────────────────────────────────
+    // ── 2. Detect port + build new image in parallel ──────────────────────────
     const imageTag = `brimble-${id}:latest`
-    await buildImage(srcPath, imageTag, deploymentId, name, envVars)
-    updateDeployment(deploymentId, { image_tag: imageTag })
 
-    // ── 4. Start next container (old still serving) ───────────────────────────
+    const [appPort] = await Promise.all([
+      detectPort(srcPath).then((p) => p ?? 3000),
+      buildImage(srcPath, imageTag, deploymentId, name, envVars),
+    ])
+
+    updateDeployment(deploymentId, { app_port: appPort, image_tag: imageTag })
+
+    // ── 3. Start next container (old still serving) ───────────────────────────
     emitLog(deploymentId, 'system', 'Starting new container…')
-    await stopAndRemove(nextContainerName).catch(() => {}) // clean up stale next if any
     const containerId = await runContainer(nextContainerName, imageTag, appPort, envVars)
 
-    // ── 5. Probe next container ───────────────────────────────────────────────
+    // ── 4. Probe next container ───────────────────────────────────────────────
     emitLog(deploymentId, 'system', `Waiting for ${nextContainerName}:${appPort}…`)
     await waitForContainer(nextContainerName, appPort)
 
-    // ── 6. Atomic Caddy upstream swap — zero gap ──────────────────────────────
+    // ── 5. Atomic Caddy upstream swap — zero gap ──────────────────────────────
     emitLog(deploymentId, 'system', 'New version ready — swapping traffic…')
     await updateRoute(deploymentId, nextContainerName, appPort)
 
-    // ── 7. Tear down old container (traffic already on next) ──────────────────
+    // ── 6. Tear down old container (traffic already on next) ──────────────────
     emitLog(deploymentId, 'system', `Stopping old container ${oldContainerName}…`)
     await stopAndRemove(oldContainerName).catch(() => {})
 
-    const url = `http://${id}.localhost`
+    const subdomain = toSubdomain(name, id)
+    const url = `http://${subdomain}.localhost`
     updateDeployment(deploymentId, {
       status: 'running',
       url,

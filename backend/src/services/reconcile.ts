@@ -34,8 +34,12 @@ export async function reconcile(): Promise<void> {
     if (dep.status === 'running' && dep.container_name) {
       const alive = await isContainerRunning(dep.container_name)
       if (alive) {
-        // Re-register the route — Caddy lost it when it restarted
-        await addRoute(dep.id, dep.container_name, dep.app_port).catch(() => {})
+        // Re-register the route — Caddy lost it when it restarted.
+        // Recover subdomain from the stored URL (e.g. "my-app-a4o0.localhost" → "my-app-a4o0").
+        const subdomain = dep.url
+          ? new URL(dep.url).hostname.split('.')[0]
+          : dep.id.toLowerCase().replace(/[^a-z0-9]/g, '')
+        await addRoute(dep.id, subdomain, dep.container_name, dep.app_port).catch(() => {})
       } else {
         updateDeployment(dep.id, { status: 'stopped' })
       }
