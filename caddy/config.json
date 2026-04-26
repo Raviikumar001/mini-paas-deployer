@@ -11,7 +11,7 @@
           "routes": [
             {
               "@id": "api",
-              "match": [{ "host": ["localhost"], "path": ["/api/*"] }],
+              "match": [{ "path": ["/api/*"] }],
               "handle": [
                 {
                   "handler": "reverse_proxy",
@@ -21,7 +21,6 @@
             },
             {
               "@id": "frontend",
-              "match": [{ "host": ["localhost"] }],
               "handle": [
                 {
                   "handler": "reverse_proxy",
