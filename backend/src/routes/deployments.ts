@@ -8,10 +8,12 @@ import {
   updateDeployment,
 } from '../db/schema.js'
 import { runPipeline } from '../services/pipeline.js'
+import { stopAndRemove } from '../services/runner.js'
+import { removeRoute } from '../services/caddy.js'
 
 export const deploymentRoutes = new Hono()
 
-// POST /api/deployments — create and kick off pipeline
+// POST /api/deployments
 deploymentRoutes.post('/', async (c) => {
   const body = await c.req.json<{ gitUrl?: string }>()
 
@@ -28,10 +30,9 @@ deploymentRoutes.post('/', async (c) => {
 
   const name = url.pathname.split('/').filter(Boolean).pop() ?? 'deployment'
   const id = nanoid(10)
-
   const deployment = createDeployment(id, name, body.gitUrl)
 
-  // Fire-and-forget — client polls or streams logs for progress
+  // Fire-and-forget — client follows progress via SSE
   runPipeline(id, body.gitUrl).catch((err) => {
     updateDeployment(id, { status: 'failed', error: String(err) })
   })
@@ -40,9 +41,7 @@ deploymentRoutes.post('/', async (c) => {
 })
 
 // GET /api/deployments
-deploymentRoutes.get('/', (c) => {
-  return c.json(listDeployments())
-})
+deploymentRoutes.get('/', (c) => c.json(listDeployments()))
 
 // GET /api/deployments/:id
 deploymentRoutes.get('/:id', (c) => {
@@ -51,17 +50,17 @@ deploymentRoutes.get('/:id', (c) => {
   return c.json(dep)
 })
 
-// DELETE /api/deployments/:id — stop container and remove record
+// DELETE /api/deployments/:id
 deploymentRoutes.delete('/:id', async (c) => {
-  const { stopAndRemove } = await import('../services/runner.js')
-  const { removeRoute } = await import('../services/caddy.js')
-
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
 
   if (dep.container_name) {
-    await stopAndRemove(dep.container_name).catch(() => {})
-    await removeRoute(dep.id).catch(() => {})
+    // Run both in parallel — container removal and Caddy route removal are independent
+    await Promise.allSettled([
+      stopAndRemove(dep.container_name),
+      removeRoute(dep.id),
+    ])
   }
 
   deleteDeployment(dep.id)

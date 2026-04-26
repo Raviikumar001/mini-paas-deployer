@@ -5,9 +5,14 @@ import { logEmitter, type PipelineEvent } from '../lib/emitter.js'
 
 export const logsRoute = new Hono()
 
-// GET /api/deployments/:id/logs  — SSE stream
-// On connect: flush persisted log history, then stream live events.
-// Stays open until the pipeline emits 'done' or the client disconnects.
+const TERMINAL = new Set(['running', 'failed', 'stopped'])
+
+// GET /api/deployments/:id/logs — SSE
+//
+// 1. Flush persisted history immediately (scroll-back on reconnect).
+// 2. If deployment is already in a terminal state, send done and close.
+// 3. Otherwise subscribe to live events; resolve when 'done' arrives or
+//    the client disconnects — whichever comes first.
 logsRoute.get('/:id/logs', (c) => {
   const id = c.req.param('id')
 
@@ -15,9 +20,7 @@ logsRoute.get('/:id/logs', (c) => {
   if (!dep) return c.json({ error: 'not found' }, 404)
 
   return streamSSE(c, async (stream) => {
-    // 1. Flush history so the client can scroll back immediately
-    const history = getLogs(id)
-    for (const line of history) {
+    for (const line of getLogs(id)) {
       await stream.writeSSE({
         data: JSON.stringify({
           type: 'log',
@@ -28,26 +31,27 @@ logsRoute.get('/:id/logs', (c) => {
       })
     }
 
-    // 2. Subscribe to live events from the pipeline
-    let done = false
-
-    const onEvent = async (event: PipelineEvent) => {
-      if (done) return
-      await stream.writeSSE({ data: JSON.stringify(event) })
-      if (event.type === 'done') done = true
+    if (TERMINAL.has(dep.status)) {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
+      return
     }
 
-    logEmitter.on(id, onEvent)
-
-    // 3. Hold the connection open until abort or pipeline done
     await new Promise<void>((resolve) => {
-      stream.onAbort(resolve)
-      // also resolve when pipeline signals completion
-      const check = setInterval(() => {
-        if (done) { clearInterval(check); resolve() }
-      }, 500)
-    })
+      const onEvent = async (event: PipelineEvent) => {
+        await stream.writeSSE({ data: JSON.stringify(event) })
+        if (event.type === 'done') {
+          logEmitter.off(id, onEvent)
+          resolve()
+        }
+      }
 
-    logEmitter.off(id, onEvent)
+      logEmitter.on(id, onEvent)
+
+      // Client navigated away or closed tab
+      stream.onAbort(() => {
+        logEmitter.off(id, onEvent)
+        resolve()
+      })
+    })
   })
 })

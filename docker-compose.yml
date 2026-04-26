@@ -3,7 +3,7 @@ name: brimble
 networks:
   net:
     driver: bridge
-    name: brimble_net   # explicit name so DOCKER_NETWORK=brimble_net always resolves
+    name: brimble_net   # explicit name keeps DOCKER_NETWORK=brimble_net stable
 
 volumes:
   buildkit_cache:
@@ -14,15 +14,14 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "2019:2019"   # admin API — backend patches routes here
+      - "2019:2019"   # admin API — backend patches deployment routes here at runtime
     volumes:
       - ./caddy/config.json:/config/caddy.json:ro
     networks:
       - net
     command: caddy run --config /config/caddy.json
-    depends_on:
-      - backend
-      - frontend
+    # No depends_on: caddy is the ingress and starts independently.
+    # It will proxy-fail gracefully until backend/frontend are up.
 
   buildkit:
     image: moby/buildkit:latest
@@ -50,6 +49,7 @@ services:
       BUILDKIT_HOST: docker-container://buildkit
       PORT: 3001
     depends_on:
+      - caddy
       - buildkit
 
   frontend:
