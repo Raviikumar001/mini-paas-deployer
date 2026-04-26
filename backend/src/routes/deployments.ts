@@ -33,7 +33,7 @@ deploymentRoutes.post('/', async (c) => {
   const deployment = createDeployment(id, name, body.gitUrl)
 
   // Fire-and-forget — client follows progress via SSE
-  runPipeline(id, body.gitUrl).catch((err) => {
+  runPipeline(id, body.gitUrl, name).catch((err) => {
     updateDeployment(id, { status: 'failed', error: String(err) })
   })
 

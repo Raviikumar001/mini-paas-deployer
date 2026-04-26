@@ -25,13 +25,15 @@ services:
 
   buildkit:
     image: moby/buildkit:latest
-    container_name: buildkit   # fixed name so BUILDKIT_HOST=docker-container://buildkit resolves
+    container_name: buildkit
     restart: unless-stopped
     privileged: true
     networks:
       - net
     volumes:
       - buildkit_cache:/var/lib/buildkit
+    # Expose TCP so backend reaches BuildKit directly without a docker-exec round-trip
+    command: buildkitd --addr tcp://0.0.0.0:1234 --addr unix:///run/buildkit/buildkitd.sock
 
   backend:
     build:
@@ -46,7 +48,7 @@ services:
       DATABASE_PATH: /data/db.sqlite
       CADDY_ADMIN: http://caddy:2019
       DOCKER_NETWORK: brimble_net
-      BUILDKIT_HOST: docker-container://buildkit
+      BUILDKIT_HOST: tcp://buildkit:1234
       PORT: 3001
     depends_on:
       - caddy

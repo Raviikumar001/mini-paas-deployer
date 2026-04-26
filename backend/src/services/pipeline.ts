@@ -3,28 +3,31 @@ import { rm } from 'fs/promises'
 import { updateDeployment } from '../db/schema.js'
 import { emitLog, emitStatus, emitDone } from '../lib/emitter.js'
 import { cloneRepo, buildImage, detectPort } from './builder.js'
-import { runContainer, stopAndRemove } from './runner.js'
+import { runContainer, stopAndRemove, waitForContainer } from './runner.js'
 import { addRoute } from './caddy.js'
 
 const TMP = '/tmp'
 
-export async function runPipeline(deploymentId: string, gitUrl: string): Promise<void> {
+export async function runPipeline(
+  deploymentId: string,
+  gitUrl: string,
+  name: string, // repo name — stable across redeploys, used as build cache key
+): Promise<void> {
   const srcPath = join(TMP, `build-${deploymentId}`)
 
   try {
     // ── 1. Clone ──────────────────────────────────────────────────────────────
     emitStatus(deploymentId, 'building')
     updateDeployment(deploymentId, { status: 'building' })
-
     await cloneRepo(gitUrl, srcPath, deploymentId)
 
-    // ── 2. Detect app port ────────────────────────────────────────────────────
-    const appPort = await detectPort(srcPath) ?? 3000
+    // ── 2. Detect port (best-effort; fallback 3000) ───────────────────────────
+    const appPort = (await detectPort(srcPath)) ?? 3000
     updateDeployment(deploymentId, { app_port: appPort })
 
-    // ── 3. Build image with Railpack ──────────────────────────────────────────
+    // ── 3. Build image ────────────────────────────────────────────────────────
     const imageTag = `brimble-${deploymentId}:latest`
-    await buildImage(srcPath, imageTag, deploymentId)
+    await buildImage(srcPath, imageTag, deploymentId, name)
     updateDeployment(deploymentId, { image_tag: imageTag })
 
     // ── 4. Run container ──────────────────────────────────────────────────────
@@ -32,22 +35,23 @@ export async function runPipeline(deploymentId: string, gitUrl: string): Promise
     updateDeployment(deploymentId, { status: 'deploying' })
 
     const containerName = `dep-${deploymentId}`
-
-    // Tear down any previous run of this deployment
-    await stopAndRemove(containerName).catch(() => {})
+    await stopAndRemove(containerName).catch(() => {}) // safe no-op on first deploy
 
     const containerId = await runContainer(containerName, imageTag, appPort)
     updateDeployment(deploymentId, { container_id: containerId, container_name: containerName })
 
-    // ── 5. Register with Caddy ────────────────────────────────────────────────
+    // ── 5. Wait for app to accept connections ─────────────────────────────────
+    emitLog(deploymentId, 'system', `Waiting for ${containerName}:${appPort}…`)
+    await waitForContainer(containerName, appPort)
+
+    // ── 6. Wire up Caddy ingress ──────────────────────────────────────────────
     emitLog(deploymentId, 'system', 'Configuring ingress…')
     await addRoute(deploymentId, containerName, appPort)
 
     const url = `/p/${deploymentId}`
     updateDeployment(deploymentId, { status: 'running', url })
-
     emitStatus(deploymentId, 'running')
-    emitLog(deploymentId, 'system', `Deployment live at ${url}`)
+    emitLog(deploymentId, 'system', `Live → ${url}`)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     updateDeployment(deploymentId, { status: 'failed', error: message })

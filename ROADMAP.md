@@ -342,9 +342,9 @@ services:
 | 4 | Pipeline: docker run + Caddy admin API patch | [x] |
 | 5 | SSE endpoint (EventEmitter → client, flush history on connect) | [x] |
 | 6 | Frontend: form + deployment list + SSE log panel | [x] |
-| 7 | Sample app + smoke test `docker compose up` end-to-end | [ ] |
+| 7 | Sample app + smoke test `docker compose up` end-to-end | [x] |
 | 8 | Bonus: redeploy endpoint | [ ] |
-| 9 | README + Loom recording | [ ] |
+| 9 | README + Loom recording | [x] |
 | 10 | Deploy on brimble.com + write feedback | [ ] |
 
 ---
