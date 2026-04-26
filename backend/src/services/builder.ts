@@ -51,9 +51,10 @@ export async function cloneRepo(
 // documented so we probe several known paths. Caller defaults to 3000 —
 // apps should always read process.env.PORT anyway.
 
-export async function detectPort(srcPath: string): Promise<number | null> {
+// Exported for unit testing — parses PORT from `railpack info --format json` output.
+// The JSON schema isn't fully documented so we probe several known paths.
+export function parsePortFromInfo(stdout: string): number | null {
   try {
-    const { stdout } = await exec(`railpack info --format json ${srcPath}`)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const info = JSON.parse(stdout) as any
     const raw =
@@ -62,6 +63,16 @@ export async function detectPort(srcPath: string): Promise<number | null> {
       info?.config?.deploy?.variables?.PORT
     const n = Number(raw)
     if (raw !== undefined && !Number.isNaN(n) && n > 0) return n
+  } catch {
+    // best-effort
+  }
+  return null
+}
+
+export async function detectPort(srcPath: string): Promise<number | null> {
+  try {
+    const { stdout } = await exec(`railpack info --format json ${srcPath}`)
+    return parsePortFromInfo(stdout)
   } catch {
     // best-effort
   }
