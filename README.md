@@ -60,15 +60,35 @@ POST /api/deployments { gitUrl }
   ↓ 202 + { id }          ← client opens SSE immediately
 
   git clone --depth=1 <url>
-  railpack info → detect PORT (fallback: 3000)
-  railpack build --name brimble-<id>:latest --cache-key <repo-name>
+  ┌─ railpack info → detect PORT (fallback: 3000)  ─┐  run in parallel:
+  └─ railpack build --name brimble-<id>:latest      ─┘  both only read srcPath
   docker run -d --name dep-<id> --network brimble_net --env PORT=<port>
-  TCP probe dep-<id>:<port>  ← wait until app accepts connections
-  POST caddy:2019/config/…/routes  ← add host route for <subdomain>.localhost
-  status → running, url → http://<subdomain>.localhost
+  TCP probe dep-<id>:<port>  ← poll every 400ms, up to 60s
+  POST caddy:2019/config/…/routes  ← add @id-tagged host route for <subdomain>.localhost
+  status → running, url → http://<name-slug>-<4char-id>.localhost
 ```
 
+`<name-slug>` is a URL-safe lowercased version of the deployment name (e.g. `my-app-a4f0.localhost`). The `@id` tag (`dep-<deploymentId>`) is used internally so deletion and upstream patching need only a single Caddy API call.
+
 Build output streams to the UI in real time over SSE. When the pipeline ends (success or failure), `{ type: "done" }` is sent and the connection closes cleanly.
+
+### How a zero-downtime redeploy flows
+
+```
+PATCH /api/deployments/:id/redeploy
+  ↓ old container keeps serving traffic
+
+  git clone --depth=1 <url>        (fresh src, separate tmp dir)
+  ┌─ detect PORT  ─┐
+  └─ build image  ─┘  (parallel — reuses BuildKit layer cache)
+  docker run -d --name dep-<id>-<ts>  ← new container, unique timestamped name
+  TCP probe new container             ← waits until healthy
+  PATCH caddy /id/dep-<id>/handle/0/upstreams/0/dial  ← atomic upstream swap
+  docker stop + rm old container      ← only after traffic is on new
+  status → running
+```
+
+If the build or probe fails, the old container is left untouched and the deployment is marked `failed` — users never see a gap in service.
 
 ---
 
@@ -99,7 +119,7 @@ One route (`/`). File-based routing with generated `routeTree.gen.ts` adds a bui
 `useCreateDeployment` prepends the new row before the server responds. `useDeleteDeployment` removes the row before confirmation. Combined with a 3-second refetch interval for status polling, the UI feels immediate even on slower builds.
 
 **`waitForContainer` TCP probe before Caddy routing**  
-Without this, Caddy is configured to route to a container that hasn't finished bootstrapping, and the first real request returns 502. The probe polls `:PORT` every 400ms up to 30s before handing off to Caddy.
+Without this, Caddy is configured to route to a container that hasn't finished bootstrapping, and the first real request returns 502. The probe polls `:PORT` every 400ms up to 60s before handing off to Caddy. The limit is 60s (not the more common 30s) because Next.js apps can take 40–50s to cold-start on a constrained build machine.
 
 ---
 
@@ -128,6 +148,10 @@ All have sensible defaults — no `.env` file needed to run.
 - Container runtime orchestration via Docker (`run`, stop/remove, readiness wait).
 - Dynamic Caddy ingress updates through Caddy Admin API for deployed app host routes.
 - Build cache reuse via Railpack cache keying.
+- **Zero-downtime redeploy**: old container keeps serving while the new image builds and probes; Caddy upstream is swapped atomically via a single `PATCH` to the `@id`-tagged route; old container is torn down only after the swap.
+- **Startup reconciliation**: on backend boot, live containers are re-registered in Caddy (recovering from `docker compose down`/restart), in-flight deployments are marked `failed`, and containers that exited while the server was down are marked `stopped`.
+- **Human-readable deployment URLs**: `toSubdomain()` derives a stable `<name-slug>-<4char-id>.localhost` URL from the deployment name so URLs are guessable and don't change across redeployments.
+- **Parallel port detection + image build**: `detectPort` (reads files) and `buildImage` (writes to BuildKit) share no mutable state and run concurrently via `Promise.all`, saving several seconds per deploy.
 - End-to-end local startup with a single `docker compose up --build`.
 
 ---
@@ -139,6 +163,7 @@ All have sensible defaults — no `.env` file needed to run.
 - **Build cancellation + queueing**: add cancel endpoints and a simple worker queue to prevent overlapping heavy builds on small machines.
 - **Structured build progress**: parse build output into typed step events so the UI can show phase/timing instead of plain text lines.
 - **Production frontend serving**: switch from Vite dev server in container runtime to a built static bundle served by Caddy.
+- Right now it only shows build logs, not deploy logs, so with more time I would have like to implement it. 
 
 ## What I'd rip out
 
@@ -150,6 +175,6 @@ All have sensible defaults — no `.env` file needed to run.
 
 ## Rough time spent, and what I'd change if I had another weekend
 
-Rough time spent: **~8 hours**.
+Rough time spent: **~11 hours**.
 
 With another weekend, I would prioritize: upload deploys (zip/tar), domain/TLS hardening, and a more production-ready runtime profile (build cancellation, queueing, and static frontend serving).
