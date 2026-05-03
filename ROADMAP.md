@@ -1,9 +1,5 @@
 # Brimble Take-Home — Deployment Pipeline
 
-**Deadline:** 27 April 2026  
-**Scoring weight priority:** Hard requirements (30%) → End-to-end works (20%) → Pipeline design (20%) → Code quality (15%)
-
----
 
 ## What We're Building
 
