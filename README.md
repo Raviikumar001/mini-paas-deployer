@@ -17,7 +17,6 @@ Open **http://localhost**, paste a public Git URL, click Deploy.
 - Open `http://localhost`.
 - Do **not** open port `5173` directly.
 - `5173` is the frontend container's internal Vite server; Caddy is the public ingress on port `80` and routes both UI and API traffic.
-- This project is documented for local Docker Compose usage; it is not presented here as an EC2-hosted deployment.
 
 > **Prerequisites:** Docker with BuildKit support (Docker Desktop or Engine ≥ 23). No other accounts or tools required.
 
@@ -29,6 +28,19 @@ The `sample-app/` directory is a minimal Node HTTP server that reads `process.en
 2. Paste that URL into the UI.
 
 Or use any public Node.js/Go/Python repo that reads `PORT` from the environment — Railpack auto-detects the stack.
+
+---
+
+## Features
+
+- **One-page frontend** built with Vite + TanStack Router + TanStack Query
+- **Git-based deployments** — paste a URL, backend clones, builds, and runs it
+- **Deployment lifecycle** — `pending` → `building` → `deploying` → `running`, with `failed`, `stopped`, and `redeploying` states tracked in SQLite
+- **Live log streaming** to the browser over SSE, with scroll-back of persisted logs
+- **Zero-downtime redeploys** — old container keeps serving while the new image builds; Caddy upstream is atomically swapped once the new container is healthy
+- **Startup reconciliation** — if the backend restarts, live containers are re-registered in Caddy and stale statuses are cleaned up
+- **Build cache reuse** via Railpack cache keying
+- **Environment variables** — pass runtime and build-time env vars (e.g. `NEXT_PUBLIC_*`, `VITE_*`) via the UI
 
 ---
 
@@ -92,7 +104,7 @@ If the build or probe fails, the old container is left untouched and the deploym
 
 ---
 
-## Key design decisions
+## Why these choices
 
 **Hono over Express**  
 Hono has native `streamSSE` support, ships a tiny footprint, and runs on Web Standards. No middleware gymnastics for streaming.
@@ -104,7 +116,7 @@ Synchronous API maps cleanly onto the pipeline model — no async plumbing for s
 Log streaming is one-directional (server → client). SSE is simpler, works natively in browsers without a library, and survives HTTP/1.1 proxies including Caddy.
 
 **Caddy JSON config (not Caddyfile)**  
-The JSON admin API lets us insert and delete routes at runtime without a reload. Each deployment gets a route with an `@id` tag so deletion is a single `DELETE /id/dep-<id>` call.
+The JSON admin API lets me insert and delete routes at runtime without a reload. Each deployment gets a route with an `@id` tag so deletion is a single `DELETE /id/dep-<id>` call.
 
 **`docker-container://buildkit` for BuildKit**  
 Railpack uses the Docker socket to exec into the named `buildkit` container and connect to its unix socket — no TLS certificates required. The TCP `tcp://` scheme is buildkitd's default gRPC listener which requires mTLS in recent versions; `docker-container://` avoids that entirely and is Railpack's own recommended approach.
@@ -137,44 +149,23 @@ All have sensible defaults — no `.env` file needed to run.
 
 ---
 
-## Implemented in this repository
+## Known limitations / future work
 
-- One-page frontend built with Vite + TanStack Router + TanStack Query.
-- Deployment creation from Git URL (`POST /api/deployments`).
-- Deployment listing, detail fetch, delete, and redeploy endpoints.
-- Deployment status lifecycle persisted in SQLite: `pending`, `building`, `deploying`, `running`, `redeploying`, `failed`, `stopped`.
-- Real-time log streaming to the UI over SSE (`GET /api/deployments/:id/logs`) with replay of persisted logs.
-- Railpack-based image build flow (no handwritten app Dockerfiles required for deployed apps).
-- Container runtime orchestration via Docker (`run`, stop/remove, readiness wait).
-- Dynamic Caddy ingress updates through Caddy Admin API for deployed app host routes.
-- Build cache reuse via Railpack cache keying.
-- **Zero-downtime redeploy**: old container keeps serving while the new image builds and probes; Caddy upstream is swapped atomically via a single `PATCH` to the `@id`-tagged route; old container is torn down only after the swap.
-- **Startup reconciliation**: on backend boot, live containers are re-registered in Caddy (recovering from `docker compose down`/restart), in-flight deployments are marked `failed`, and containers that exited while the server was down are marked `stopped`.
-- **Human-readable deployment URLs**: `toSubdomain()` derives a stable `<name-slug>-<4char-id>.localhost` URL from the deployment name so URLs are guessable and don't change across redeployments.
-- **Parallel port detection + image build**: `detectPort` (reads files) and `buildImage` (writes to BuildKit) share no mutable state and run concurrently via `Promise.all`, saving several seconds per deploy.
-- End-to-end local startup with a single `docker compose up --build`.
+- Only shows build logs right now, not deploy/runtime logs
+- Polling the deployment list every 3 seconds works but is a bit noisy — eventually want SSE-driven invalidation instead
+- CORS is wide open (`cors()` on `/api/*`) — should be origin-restricted for non-local use
+- Deployment URLs hardcode `.localhost` — need an env-driven base domain for real hosting
+- No build cancellation or queueing yet — overlapping heavy builds on a small machine can get rough
+- The frontend is served by Vite's dev server in the container; for real production use it should be a static build served by Caddy
+- No project upload (zip/tar) support yet — Git URL only
 
 ---
 
-## What I'd do with more time
+## Cleanup note
 
-- **Project upload flow**: add uploaded project support alongside Git URL in the create deployment API and UI.
-- **Domain-aware URLs**: replace hardcoded `.localhost` deployment URLs with an env-driven base domain (for non-local hosts).
-- **Build cancellation + queueing**: add cancel endpoints and a simple worker queue to prevent overlapping heavy builds on small machines.
-- **Structured build progress**: parse build output into typed step events so the UI can show phase/timing instead of plain text lines.
-- **Production frontend serving**: switch from Vite dev server in container runtime to a built static bundle served by Caddy.
-- Right now it only shows build logs, not deploy logs, so with more time I would have like to implement it. 
+Deployed containers (`dep-*`) are created by the pipeline, not by Docker Compose. If you want to fully tear down including those:
 
-## What I'd rip out
-
-- **3-second global polling** in deployment list (`refetchInterval: 3_000`) and rely more on SSE-driven invalidation/state updates.
-- **Open CORS defaults** (`cors()` on `/api/*`) and replace with explicit allowed origins via environment config.
-- **`.localhost`-specific assumptions** in generated deployment URLs and host matching for routes intended for non-local environments.
-
----
-
-## Rough time spent, and what I'd change if I had another weekend
-
-Rough time spent: **~11 hours**.
-
-With another weekend, I would prioritize: upload deploys (zip/tar), domain/TLS hardening, and a more production-ready runtime profile (build cancellation, queueing, and static frontend serving).
+```bash
+docker ps -a --filter "name=dep-" --format "{{.Names}}" | xargs -r docker rm -f
+docker compose down
+```
