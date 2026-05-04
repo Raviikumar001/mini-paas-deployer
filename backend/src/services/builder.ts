@@ -36,9 +36,15 @@ export async function cloneRepo(
   url: string,
   destPath: string,
   deploymentId: string,
+  branch?: string,
 ): Promise<void> {
-  emitLog(deploymentId, 'system', `Cloning ${url}…`)
-  await spawnStream('git', ['clone', '--depth=1', url, destPath], deploymentId)
+  const args = ['clone', '--depth=1']
+  if (branch && branch !== 'main') {
+    args.push('--branch', branch)
+  }
+  args.push(url, destPath)
+  emitLog(deploymentId, 'system', `Cloning ${url}${branch && branch !== 'main' ? ` #${branch}` : ''}…`)
+  await spawnStream('git', args, deploymentId)
   emitLog(deploymentId, 'system', 'Clone complete.')
 }
 

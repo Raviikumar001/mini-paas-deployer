@@ -29,10 +29,13 @@ function pairsToRecord(pairs: EnvPair[]): Record<string, string> {
 
 export function DeployForm() {
   const [url, setUrl] = useState('')
+  const [branch, setBranch] = useState('')
   const [pairs, setPairs] = useState<EnvPair[]>([])
   const [pasteMode, setPasteMode] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const [showEnv, setShowEnv] = useState(false)
+  const [attachPostgres, setAttachPostgres] = useState(false)
+  const [attachRedis, setAttachRedis] = useState(false)
   const { mutate, isPending, error } = useCreateDeployment()
 
   const submit = (e: FormEvent) => {
@@ -41,10 +44,19 @@ export function DeployForm() {
     if (!trimmed) return
     const envPairs = pasteMode ? parseEnvFile(pasteText) : pairs
     const envVars = pairsToRecord(envPairs)
-    mutate(
-      { gitUrl: trimmed, envVars: Object.keys(envVars).length ? envVars : undefined },
-      { onSuccess: () => { setUrl(''); setPairs([]); setPasteText('') } },
-    )
+    const params: {
+      gitUrl: string
+      envVars?: Record<string, string>
+      branch?: string
+      addons?: Array<{ type: 'postgres' | 'redis' }>
+    } = { gitUrl: trimmed }
+    if (Object.keys(envVars).length) params.envVars = envVars
+    if (branch.trim()) params.branch = branch.trim()
+    const addons: Array<{ type: 'postgres' | 'redis' }> = []
+    if (attachPostgres) addons.push({ type: 'postgres' })
+    if (attachRedis) addons.push({ type: 'redis' })
+    if (addons.length) params.addons = addons
+    mutate(params, { onSuccess: () => { setUrl(''); setBranch(''); setPairs([]); setPasteText(''); setAttachPostgres(false); setAttachRedis(false) } })
   }
 
   const addPair = () => setPairs((p) => [...p, { key: '', value: '' }])
@@ -70,6 +82,45 @@ export function DeployForm() {
             style={searchInputStyle}
           />
         </div>
+
+        {/* Branch input */}
+        <input
+          type="text"
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+          placeholder="main"
+          style={branchInputStyle}
+        />
+
+        {/* Postgres toggle */}
+        <button
+          type="button"
+          onClick={() => setAttachPostgres((v) => !v)}
+          title="Attach PostgreSQL"
+          style={{
+            ...envToggleStyle,
+            background: attachPostgres ? 'rgba(96,165,250,0.12)' : 'var(--bg-raised)',
+            borderColor: attachPostgres ? 'rgba(96,165,250,0.3)' : 'var(--border-subtle)',
+            color: attachPostgres ? '#60a5fa' : 'var(--text-secondary)',
+          } as CSSProperties}
+        >
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500 }}>PG</span>
+        </button>
+
+        {/* Redis toggle */}
+        <button
+          type="button"
+          onClick={() => setAttachRedis((v) => !v)}
+          title="Attach Redis"
+          style={{
+            ...envToggleStyle,
+            background: attachRedis ? 'rgba(245,166,35,0.12)' : 'var(--bg-raised)',
+            borderColor: attachRedis ? 'rgba(245,166,35,0.3)' : 'var(--border-subtle)',
+            color: attachRedis ? 'var(--warning)' : 'var(--text-secondary)',
+          } as CSSProperties}
+        >
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500 }}>RD</span>
+        </button>
 
         {/* Env toggle */}
         <button
@@ -218,6 +269,18 @@ const searchInputStyle: CSSProperties = {
   fontSize: 14,
   outline: 'none',
   padding: '10px 0',
+}
+
+const branchInputStyle: CSSProperties = {
+  background: 'var(--bg-raised)' as string,
+  border: '0.5px solid var(--border-subtle)' as string,
+  borderRadius: 8,
+  color: 'var(--text-primary)' as string,
+  fontFamily: 'var(--font-mono)' as string,
+  fontSize: 13,
+  outline: 'none',
+  padding: '9px 12px',
+  width: 110,
 }
 
 const envToggleStyle: CSSProperties = {

@@ -87,6 +87,25 @@ export function DeploymentRow({ deployment: dep }: Props) {
               } as CSSProperties}>
                 {dep.name}
               </span>
+              {dep.branch && dep.branch !== 'main' && (
+                <span style={branchBadgeStyle}>{dep.branch}</span>
+              )}
+              {(() => {
+                try {
+                  const addons = JSON.parse(dep.addons || '[]') as Array<{ type: string }>
+                  return (
+                    <>
+                      {addons.some((a) => a.type === 'postgres') && (
+                        <span style={pgAddonBadgeStyle}>PG</span>
+                      )}
+                      {addons.some((a) => a.type === 'redis') && (
+                        <span style={redisAddonBadgeStyle}>RD</span>
+                      )}
+                    </>
+                  )
+                } catch { /* */ }
+                return null
+              })()}
               {dep.status === 'redeploying' && (
                 <span style={rebuildBadgeStyle}>
                   <span className="pulse-dot" style={{ ...dotStyle, background: '#a78bfa', height: 5, width: 5 }} />
@@ -255,6 +274,48 @@ const metaStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)' as string,
   gap: 5,
   marginTop: 3,
+}
+
+const branchBadgeStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'rgba(96,165,250,0.1)',
+  border: '0.5px solid rgba(96,165,250,0.2)',
+  borderRadius: 4,
+  color: '#60a5fa',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)' as string,
+  fontSize: 10,
+  fontWeight: 500,
+  gap: 5,
+  padding: '2px 7px',
+}
+
+const pgAddonBadgeStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'rgba(62,207,142,0.1)',
+  border: '0.5px solid rgba(62,207,142,0.2)',
+  borderRadius: 4,
+  color: 'var(--success)',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)' as string,
+  fontSize: 10,
+  fontWeight: 500,
+  gap: 5,
+  padding: '2px 7px',
+}
+
+const redisAddonBadgeStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'rgba(245,166,35,0.1)',
+  border: '0.5px solid rgba(245,166,35,0.2)',
+  borderRadius: 4,
+  color: 'var(--warning)',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)' as string,
+  fontSize: 10,
+  fontWeight: 500,
+  gap: 5,
+  padding: '2px 7px',
 }
 
 const rebuildBadgeStyle: CSSProperties = {

@@ -5,12 +5,14 @@ export interface Deployment {
   id: string
   name: string
   source_url: string | null
+  branch: string | null
   status: DeploymentStatus
   image_tag: string | null
   container_name: string | null
   app_port: number
   url: string | null
   env_vars: string   // JSON-encoded Record<string,string>
+  addons: string     // JSON-encoded Array<{ type: string }>
   error: string | null
   created_at: string
   updated_at: string
@@ -52,7 +54,12 @@ export const api = {
     list: (): Promise<Deployment[]> =>
       fetch(`${BASE}/deployments`).then(handle<Deployment[]>),
 
-    create: (params: { gitUrl: string; envVars?: Record<string, string> }): Promise<Deployment> =>
+    create: (params: {
+      gitUrl: string
+      envVars?: Record<string, string>
+      branch?: string
+      addons?: Array<{ type: 'postgres' | 'redis' }>
+    }): Promise<Deployment> =>
       fetch(`${BASE}/deployments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -10,6 +10,7 @@ import {
 import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
 import { stopAndRemove } from '../services/runner.js'
 import { removeRoute } from '../services/caddy.js'
+import { stopPostgres, stopRedis } from '../services/addons.js'
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
 
@@ -17,7 +18,12 @@ export const deploymentRoutes = new Hono()
 
 
 deploymentRoutes.post('/', async (c) => {
-  const body = await c.req.json<{ gitUrl?: string; envVars?: Record<string, string> }>()
+  const body = await c.req.json<{
+    gitUrl?: string
+    envVars?: Record<string, string>
+    branch?: string
+    addons?: Array<{ type: 'postgres' | 'redis' }>
+  }>()
 
   if (!body.gitUrl) return c.json({ error: 'gitUrl is required' }, 400)
 
@@ -27,11 +33,13 @@ deploymentRoutes.post('/', async (c) => {
   }
 
   const envVars = body.envVars ?? {}
+  const branch = body.branch?.trim() || 'main'
+  const addons = body.addons ?? []
   const name = url.pathname.split('/').filter(Boolean).pop() ?? 'deployment'
   const id = nanoid(10)
-  const deployment = createDeployment(id, name, body.gitUrl, envVars)
+  const deployment = createDeployment(id, name, body.gitUrl, envVars, branch, addons)
 
-  runPipeline(id, body.gitUrl, name, envVars).catch((err) => {
+  runPipeline(id, body.gitUrl, name, envVars, branch, addons).catch((err) => {
     updateDeployment(id, { status: 'failed', error: String(err) })
   })
 
@@ -53,12 +61,12 @@ deploymentRoutes.delete('/:id', async (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
 
-  if (dep.container_name) {
-    await Promise.allSettled([
-      stopAndRemove(dep.container_name),
-      removeRoute(dep.id),
-    ])
-  }
+  await Promise.allSettled([
+    dep.container_name ? stopAndRemove(dep.container_name) : Promise.resolve(),
+    removeRoute(dep.id),
+    stopPostgres(dep.id),
+    stopRedis(dep.id),
+  ])
 
   deleteDeployment(dep.id)
   return c.body(null, 204)
@@ -88,7 +96,8 @@ deploymentRoutes.post('/:id/redeploy', async (c) => {
   })
 
   const oldContainerName = dep.container_name ?? ''
-  runRedeployPipeline(dep.id, dep.source_url, dep.name, oldContainerName, envVars).catch((err) => {
+  const addons: Array<{ type: 'postgres' | 'redis' }> = dep.addons ? JSON.parse(dep.addons) : []
+  runRedeployPipeline(dep.id, dep.source_url, dep.name, oldContainerName, envVars, dep.branch ?? undefined, addons).catch((err) => {
     updateDeployment(dep.id, { status: 'failed', error: String(err) })
   })
 

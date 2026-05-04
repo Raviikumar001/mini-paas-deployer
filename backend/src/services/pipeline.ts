@@ -1,21 +1,32 @@
 import { join } from 'path'
 import { rm } from 'fs/promises'
-import { updateDeployment } from '../db/schema.js'
+import { updateDeployment, type Addon } from '../db/schema.js'
 import { emitLog, emitStatus, emitDone } from '../lib/emitter.js'
 import { cloneRepo, buildImage, detectPort } from './builder.js'
 import { runContainer, stopAndRemove, waitForContainer } from './runner.js'
 import { addRoute, updateRoute } from './caddy.js'
+import {
+  runPostgres, waitForPostgres, buildDatabaseUrl,
+  runRedis, waitForRedis, buildRedisUrl,
+} from './addons.js'
 
 const TMP = '/tmp'
 
 
-function toSubdomain(name: string, id: string): string {
+function toSubdomain(name: string, id: string, branch?: string): string {
   const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-  return `${slug}-${id.slice(0, 4)}`
+    .slice(0, 32)
+  const branchSlug = branch && branch !== 'main'
+    ? branch
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 16) + '-'
+    : ''
+  return `${branchSlug}${slug}-${id.slice(0, 4)}`
 }
 
 export async function runPipeline(
@@ -23,14 +34,32 @@ export async function runPipeline(
   gitUrl: string,
   name: string,
   envVars: Record<string, string> = {},
+  branch?: string,
+  addons: Addon[] = [],
 ): Promise<void> {
   const srcPath = join(TMP, `build-${deploymentId}`)
+  const mergedEnv = { ...envVars }
 
   try {
+    // ── 0. Start addons ───────────────────────────────────────────────────────
+    const hasPostgres = addons.some((a) => a.type === 'postgres')
+    if (hasPostgres) {
+      await runPostgres(deploymentId)
+      await waitForPostgres(deploymentId)
+      mergedEnv.DATABASE_URL = buildDatabaseUrl(deploymentId)
+    }
+
+    const hasRedis = addons.some((a) => a.type === 'redis')
+    if (hasRedis) {
+      await runRedis(deploymentId)
+      await waitForRedis(deploymentId)
+      mergedEnv.REDIS_URL = buildRedisUrl(deploymentId)
+    }
+
     // ── 1. Clone ──────────────────────────────────────────────────────────────
     emitStatus(deploymentId, 'building')
     updateDeployment(deploymentId, { status: 'building' })
-    await cloneRepo(gitUrl, srcPath, deploymentId)
+    await cloneRepo(gitUrl, srcPath, deploymentId, branch)
 
     // ── 2. Detect port + build image in parallel ──────────────────────────────
     // detectPort only reads files already in srcPath; buildImage only reads
@@ -52,7 +81,7 @@ export async function runPipeline(
     const containerName = `dep-${id}`
     await stopAndRemove(containerName).catch(() => {})
 
-    const containerId = await runContainer(containerName, imageTag, appPort, envVars)
+    const containerId = await runContainer(containerName, imageTag, appPort, mergedEnv)
     updateDeployment(deploymentId, { container_id: containerId, container_name: containerName })
 
     // ── 4. Wait for app to accept connections ─────────────────────────────────
@@ -61,7 +90,7 @@ export async function runPipeline(
 
     // ── 5. Wire up Caddy ingress ──────────────────────────────────────────────
     emitLog(deploymentId, 'system', 'Configuring ingress…')
-    const subdomain = toSubdomain(name, id)
+    const subdomain = toSubdomain(name, id, branch)
     await addRoute(deploymentId, subdomain, containerName, appPort)
 
     const url = `http://${subdomain}.localhost`
@@ -91,18 +120,36 @@ export async function runRedeployPipeline(
   name: string,
   oldContainerName: string,
   envVars: Record<string, string> = {},
+  branch?: string,
+  addons: Addon[] = [],
 ): Promise<void> {
   const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
   const srcPath = join(TMP, `build-${deploymentId}-redeploy`)
   // Unique name each redeploy so it never collides with the currently-serving
   // container (which may itself be named dep-<id>-<prev-ts> from a prior redeploy).
   const nextContainerName = `dep-${id}-${Date.now().toString(36)}`
+  const mergedEnv = { ...envVars }
 
   try {
+    // ── 0. Ensure addons are running ──────────────────────────────────────────
+    const hasPostgres = addons.some((a) => a.type === 'postgres')
+    if (hasPostgres) {
+      await runPostgres(deploymentId)
+      await waitForPostgres(deploymentId)
+      mergedEnv.DATABASE_URL = buildDatabaseUrl(deploymentId)
+    }
+
+    const hasRedis = addons.some((a) => a.type === 'redis')
+    if (hasRedis) {
+      await runRedis(deploymentId)
+      await waitForRedis(deploymentId)
+      mergedEnv.REDIS_URL = buildRedisUrl(deploymentId)
+    }
+
     // ── 1. Clone fresh copy ───────────────────────────────────────────────────
     emitStatus(deploymentId, 'redeploying')
     updateDeployment(deploymentId, { status: 'redeploying' })
-    await cloneRepo(gitUrl, srcPath, deploymentId)
+    await cloneRepo(gitUrl, srcPath, deploymentId, branch)
 
     // ── 2. Detect port + build new image in parallel ──────────────────────────
     const imageTag = `brimble-${id}:latest`
@@ -116,7 +163,7 @@ export async function runRedeployPipeline(
 
     // ── 3. Start next container (old still serving) ───────────────────────────
     emitLog(deploymentId, 'system', 'Starting new container…')
-    const containerId = await runContainer(nextContainerName, imageTag, appPort, envVars)
+    const containerId = await runContainer(nextContainerName, imageTag, appPort, mergedEnv)
 
     // ── 4. Probe next container ───────────────────────────────────────────────
     emitLog(deploymentId, 'system', `Waiting for ${nextContainerName}:${appPort}…`)
@@ -130,7 +177,7 @@ export async function runRedeployPipeline(
     emitLog(deploymentId, 'system', `Stopping old container ${oldContainerName}…`)
     await stopAndRemove(oldContainerName).catch(() => {})
 
-    const subdomain = toSubdomain(name, id)
+    const subdomain = toSubdomain(name, id, branch)
     const url = `http://${subdomain}.localhost`
     updateDeployment(deploymentId, {
       status: 'running',

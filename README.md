@@ -41,6 +41,9 @@ Or use any public Node.js/Go/Python repo that reads `PORT` from the environment 
 - **Startup reconciliation** — if the backend restarts, live containers are re-registered in Caddy and stale statuses are cleaned up
 - **Build cache reuse** via Railpack cache keying
 - **Environment variables** — pass runtime and build-time env vars (e.g. `NEXT_PUBLIC_*`, `VITE_*`) via the UI
+- **Branch-based / preview deployments** — deploy any branch (not just `main`). Non-main branches get their own subdomain like `feature-auth-my-app-a4f0.localhost`
+- **PostgreSQL & Redis sidecars** — attach Postgres and/or Redis containers to any deployment with one click. `DATABASE_URL` and `REDIS_URL` are injected automatically
+- **GitHub webhook** — `POST /api/webhook/github` triggers redeploys on push events, or creates new preview deployments for unseen branches
 
 ---
 
@@ -68,16 +71,17 @@ Deployed containers
 ### How a deployment flows
 
 ```
-POST /api/deployments { gitUrl }
+POST /api/deployments { gitUrl, branch?, addons? }
   ↓ 202 + { id }          ← client opens SSE immediately
 
-  git clone --depth=1 <url>
+  [start PostgreSQL / Redis sidecars if requested]
+  git clone --depth=1 --branch <branch> <url>
   ┌─ railpack info → detect PORT (fallback: 3000)  ─┐  run in parallel:
   └─ railpack build --name brimble-<id>:latest      ─┘  both only read srcPath
-  docker run -d --name dep-<id> --network brimble_net --env PORT=<port>
+  docker run -d --name dep-<id> --network brimble_net --env PORT=<port> --env DATABASE_URL=... --env REDIS_URL=...
   TCP probe dep-<id>:<port>  ← poll every 400ms, up to 60s
   POST caddy:2019/config/…/routes  ← add @id-tagged host route for <subdomain>.localhost
-  status → running, url → http://<name-slug>-<4char-id>.localhost
+  status → running, url → http://<branch-><name-slug>-<4char-id>.localhost
 ```
 
 `<name-slug>` is a URL-safe lowercased version of the deployment name (e.g. `my-app-a4f0.localhost`). The `@id` tag (`dep-<deploymentId>`) is used internally so deletion and upstream patching need only a single Caddy API call.
@@ -101,6 +105,29 @@ PATCH /api/deployments/:id/redeploy
 ```
 
 If the build or probe fails, the old container is left untouched and the deployment is marked `failed` — users never see a gap in service.
+
+### GitHub webhook
+
+```
+POST /api/webhook/github
+  ↓ parse push or pull_request payload
+  ↓ extract repo URL + branch
+  ↓ existing deployment for repo#branch ?
+     yes → trigger redeploy (zero-downtime)
+     no  → create new deployment
+```
+
+Test locally with curl:
+
+```bash
+curl -X POST http://localhost/api/webhook/github \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ref": "refs/heads/staging",
+    "repository": { "clone_url": "https://github.com/user/repo", "name": "repo" },
+    "head_commit": { "id": "abc123", "message": "wip" }
+  }'
+```
 
 ---
 
@@ -158,6 +185,8 @@ All have sensible defaults — no `.env` file needed to run.
 - No build cancellation or queueing yet — overlapping heavy builds on a small machine can get rough
 - The frontend is served by Vite's dev server in the container; for real production use it should be a static build served by Caddy
 - No project upload (zip/tar) support yet — Git URL only
+- PostgreSQL & Redis sidecars start fresh on every redeploy — no persistent volume for data yet
+- Webhook endpoint has no signature verification — anyone can POST to it
 
 ---
 

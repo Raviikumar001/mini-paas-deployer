@@ -3,10 +3,17 @@ import Database from 'better-sqlite3'
 export type DeploymentStatus =
   | 'pending' | 'building' | 'deploying' | 'running' | 'redeploying' | 'failed' | 'stopped'
 
+export type AddonType = 'postgres' | 'redis'
+
+export interface Addon {
+  type: AddonType
+}
+
 export interface Deployment {
   id: string
   name: string
   source_url: string | null
+  branch: string | null
   status: DeploymentStatus
   image_tag: string | null
   container_id: string | null
@@ -14,6 +21,7 @@ export interface Deployment {
   app_port: number
   url: string | null
   env_vars: string   // JSON-encoded Record<string, string>
+  addons: string     // JSON-encoded Addon[]
   error: string | null
   created_at: string
   updated_at: string
@@ -46,6 +54,7 @@ export function initDb(): void {
       id             TEXT PRIMARY KEY,
       name           TEXT NOT NULL,
       source_url     TEXT,
+      branch         TEXT DEFAULT 'main',
       status         TEXT NOT NULL DEFAULT 'pending',
       image_tag      TEXT,
       container_id   TEXT,
@@ -53,6 +62,7 @@ export function initDb(): void {
       app_port       INTEGER NOT NULL DEFAULT 3000,
       url            TEXT,
       error          TEXT,
+      addons         TEXT DEFAULT '[]',
       created_at     TEXT NOT NULL,
       updated_at     TEXT NOT NULL
     );
@@ -69,9 +79,17 @@ export function initDb(): void {
       ON log_lines(deployment_id, id);
   `)
 
-  // Non-destructive migration — adds column if this is an existing DB
+  // Non-destructive migrations — adds columns if this is an existing DB
   try {
     getDb().exec(`ALTER TABLE deployments ADD COLUMN env_vars TEXT NOT NULL DEFAULT '{}'`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN branch TEXT DEFAULT 'main'`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN addons TEXT DEFAULT '[]'`)
   } catch { /* column already exists */ }
 }
 
@@ -82,14 +100,16 @@ export function createDeployment(
   name: string,
   sourceUrl: string | null,
   envVars: Record<string, string> = {},
+  branch = 'main',
+  addons: Addon[] = [],
 ): Deployment {
   const now = new Date().toISOString()
   getDb()
     .prepare(
-      `INSERT INTO deployments (id, name, source_url, status, env_vars, created_at, updated_at)
-       VALUES (?, ?, ?, 'pending', ?, ?, ?)`,
+      `INSERT INTO deployments (id, name, source_url, branch, status, env_vars, addons, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
     )
-    .run(id, name, sourceUrl, JSON.stringify(envVars), now, now)
+    .run(id, name, sourceUrl, branch, JSON.stringify(envVars), JSON.stringify(addons), now, now)
   return getDeployment(id)!
 }
 
@@ -103,6 +123,15 @@ export function getDeployment(id: string): Deployment | undefined {
   return getDb()
     .prepare('SELECT * FROM deployments WHERE id = ?')
     .get(id) as Deployment | undefined
+}
+
+export function findDeploymentBySourceAndBranch(
+  sourceUrl: string,
+  branch: string,
+): Deployment | undefined {
+  return getDb()
+    .prepare('SELECT * FROM deployments WHERE source_url = ? AND branch = ? ORDER BY created_at DESC LIMIT 1')
+    .get(sourceUrl, branch) as Deployment | undefined
 }
 
 export function updateDeployment(
