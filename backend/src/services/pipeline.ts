@@ -9,6 +9,7 @@ import {
   runPostgres, waitForPostgres, buildDatabaseUrl,
   runRedis, waitForRedis, buildRedisUrl,
 } from './addons.js'
+import { startRuntimeLogs, stopRuntimeLogs } from './runtime-logs.js'
 
 const TMP = '/tmp'
 
@@ -39,6 +40,8 @@ export async function runPipeline(
 ): Promise<void> {
   const srcPath = join(TMP, `build-${deploymentId}`)
   const mergedEnv = { ...envVars }
+  let containerName = ''
+  let reachedRunning = false
 
   try {
     // ── 0. Start addons ───────────────────────────────────────────────────────
@@ -62,8 +65,6 @@ export async function runPipeline(
     await cloneRepo(gitUrl, srcPath, deploymentId, branch)
 
     // ── 2. Detect port + build image in parallel ──────────────────────────────
-    // detectPort only reads files already in srcPath; buildImage only reads
-    // srcPath too — they share no mutable state so can run concurrently.
     const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
     const imageTag = `brimble-${id}:latest`
 
@@ -78,7 +79,7 @@ export async function runPipeline(
     emitStatus(deploymentId, 'deploying')
     updateDeployment(deploymentId, { status: 'deploying' })
 
-    const containerName = `dep-${id}`
+    containerName = `dep-${id}`
     await stopAndRemove(containerName).catch(() => {})
 
     const containerId = await runContainer(containerName, imageTag, appPort, mergedEnv)
@@ -97,6 +98,9 @@ export async function runPipeline(
     updateDeployment(deploymentId, { status: 'running', url })
     emitStatus(deploymentId, 'running')
     emitLog(deploymentId, 'system', `Live → ${url}`)
+
+    reachedRunning = true
+    startRuntimeLogs(deploymentId, containerName)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     updateDeployment(deploymentId, { status: 'failed', error: message })
@@ -104,7 +108,9 @@ export async function runPipeline(
     emitLog(deploymentId, 'system', `Pipeline failed: ${message}`)
     throw err
   } finally {
-    emitDone(deploymentId)
+    if (!reachedRunning) {
+      emitDone(deploymentId)
+    }
     await rm(srcPath, { recursive: true, force: true })
   }
 }
@@ -125,10 +131,9 @@ export async function runRedeployPipeline(
 ): Promise<void> {
   const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
   const srcPath = join(TMP, `build-${deploymentId}-redeploy`)
-  // Unique name each redeploy so it never collides with the currently-serving
-  // container (which may itself be named dep-<id>-<prev-ts> from a prior redeploy).
   const nextContainerName = `dep-${id}-${Date.now().toString(36)}`
   const mergedEnv = { ...envVars }
+  let reachedRunning = false
 
   try {
     // ── 0. Ensure addons are running ──────────────────────────────────────────
@@ -187,17 +192,20 @@ export async function runRedeployPipeline(
     })
     emitStatus(deploymentId, 'running')
     emitLog(deploymentId, 'system', `Redeployed → ${url}`)
+
+    reachedRunning = true
+    startRuntimeLogs(deploymentId, nextContainerName)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    // On failure the old container may still be running — don't overwrite
-    // container_name so the URL keeps working if the old one survived.
     updateDeployment(deploymentId, { status: 'failed', error: message })
     emitStatus(deploymentId, 'failed')
     emitLog(deploymentId, 'system', `Redeploy failed: ${message}`)
     await stopAndRemove(nextContainerName).catch(() => {})
     throw err
   } finally {
-    emitDone(deploymentId)
+    if (!reachedRunning) {
+      emitDone(deploymentId)
+    }
     await rm(srcPath, { recursive: true, force: true })
   }
 }

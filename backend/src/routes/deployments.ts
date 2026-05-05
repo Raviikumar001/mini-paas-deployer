@@ -11,6 +11,7 @@ import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
 import { stopAndRemove } from '../services/runner.js'
 import { removeRoute } from '../services/caddy.js'
 import { stopPostgres, stopRedis } from '../services/addons.js'
+import { stopRuntimeLogs } from '../services/runtime-logs.js'
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
 
@@ -66,6 +67,7 @@ deploymentRoutes.delete('/:id', async (c) => {
     removeRoute(dep.id),
     stopPostgres(dep.id),
     stopRedis(dep.id),
+    stopRuntimeLogs(dep.id),
   ])
 
   deleteDeployment(dep.id)
