@@ -11,17 +11,16 @@ export function startRuntimeLogs(deploymentId: string, containerName: string): v
   const proc = spawn('docker', ['logs', '--follow', '--timestamps', containerName])
   tailers.set(deploymentId, proc)
 
-  proc.stdout.on('data', (chunk: Buffer) => {
+  // docker logs --follow writes container output to both stdout and stderr
+  // of the docker CLI process, so we merge both streams into one log stream.
+  const pipeLine = (chunk: Buffer) => {
     for (const line of chunk.toString().split('\n').filter(Boolean)) {
       emitLog(deploymentId, 'stdout', line)
     }
-  })
+  }
 
-  proc.stderr.on('data', (chunk: Buffer) => {
-    for (const line of chunk.toString().split('\n').filter(Boolean)) {
-      emitLog(deploymentId, 'system', `[docker] ${line}`)
-    }
-  })
+  proc.stdout.on('data', pipeLine)
+  proc.stderr.on('data', pipeLine)
 
   proc.on('exit', (code) => {
     tailers.delete(deploymentId)
