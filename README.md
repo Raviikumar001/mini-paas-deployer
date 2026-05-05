@@ -1,12 +1,12 @@
-# Brimble Deployment Pipeline
+# nobuild Deployment Pipeline
 
-A self-contained deployment platform: paste a Git URL, get a running container behind Caddy. One page, one API, one `docker compose up`.
+A single-page PaaS: paste a public Git URL and get a live, auto‑subdomained web app — then click to redeploy, tail logs, or tear it down. Runs locally with one command on `*.localhost`, or on any server with `*.your-domain.com`.
 
 ## Quick start
 
 ```bash
-git clone <this-repo>
-cd brimble
+git clone git@github.com:owner/repo.git
+cd nobuild
 docker compose up --build
 ```
 
@@ -65,7 +65,7 @@ BuildKit  (moby/buildkit, TCP :1234)
   └── Railpack sends build instructions here
 
 Deployed containers
-  └── Joined to brimble_net — Caddy resolves them by container name
+  └── Joined to nobuild_net — Caddy resolves them by container name
 ```
 
 ### How a deployment flows
@@ -77,8 +77,8 @@ POST /api/deployments { gitUrl, branch?, addons? }
   [start PostgreSQL / Redis sidecars if requested]
   git clone --depth=1 --branch <branch> <url>
   ┌─ railpack info → detect PORT (fallback: 3000)  ─┐  run in parallel:
-  └─ railpack build --name brimble-<id>:latest      ─┘  both only read srcPath
-  docker run -d --name dep-<id> --network brimble_net --env PORT=<port> --env DATABASE_URL=... --env REDIS_URL=...
+  └─ railpack build --name nobuild-<id>:latest      ─┘  both only read srcPath
+  docker run -d --name dep-<id> --network nobuild_net --env PORT=<port> --env DATABASE_URL=... --env REDIS_URL=...
   TCP probe dep-<id>:<port>  ← poll every 400ms, up to 60s
   POST caddy:2019/config/…/routes  ← add @id-tagged host route for <subdomain>.localhost
   status → running, url → http://<branch-><name-slug>-<4char-id>.localhost
@@ -168,7 +168,7 @@ Without this, Caddy is configured to route to a container that hasn't finished b
 |---|---|---|
 | `DATABASE_PATH` | `/data/db.sqlite` | SQLite file path |
 | `CADDY_ADMIN` | `http://caddy:2019` | Caddy admin API base URL |
-| `DOCKER_NETWORK` | `brimble_net` | Network deployed containers join |
+| `DOCKER_NETWORK` | `nobuild_net` | Network deployed containers join |
 | `BUILDKIT_HOST` | `docker-container://buildkit` | BuildKit daemon address |
 | `PORT` | `3001` | Backend port |
 

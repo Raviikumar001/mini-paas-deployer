@@ -4,7 +4,7 @@ import { createConnection } from 'net'
 import { emitLog } from '../lib/emitter.js'
 
 const exec = promisify(execCb)
-const NETWORK = process.env.DOCKER_NETWORK ?? 'brimble_net'
+const NETWORK = process.env.DOCKER_NETWORK ?? 'nobuild_net'
 
 export function postgresContainerName(deploymentId: string): string {
   return `dep-${deploymentId}-db`

@@ -66,7 +66,7 @@ export async function runPipeline(
 
     // ── 2. Detect port + build image in parallel ──────────────────────────────
     const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
-    const imageTag = `brimble-${id}:latest`
+    const imageTag = `nobuild-${id}:latest`
 
     const [appPort] = await Promise.all([
       detectPort(srcPath).then((p) => p ?? 3000),
@@ -158,7 +158,7 @@ export async function runRedeployPipeline(
     await cloneRepo(gitUrl, srcPath, deploymentId, branch)
 
     // ── 2. Detect port + build new image in parallel ──────────────────────────
-    const imageTag = `brimble-${id}:latest`
+    const imageTag = `nobuild-${id}:latest`
 
     const [appPort] = await Promise.all([
       detectPort(srcPath).then((p) => p ?? 3000),
