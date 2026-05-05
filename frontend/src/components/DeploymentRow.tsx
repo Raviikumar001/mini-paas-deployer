@@ -53,6 +53,20 @@ export function DeploymentRow({ deployment: dep }: Props) {
   let envEntries: [string, string][] = []
   try { envEntries = Object.entries(JSON.parse(dep.env_vars || '{}')) } catch { /* */ }
 
+  let addonEntries: [string, string][] = []
+  try {
+    const addons = JSON.parse(dep.addons || '[]') as Array<{ type: string }>
+    const id = dep.id.toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (addons.some((a) => a.type === 'postgres')) {
+      addonEntries.push(['DATABASE_URL', `postgres://brimble:brimble@dep-${id}-db:5432/brimble`])
+    }
+    if (addons.some((a) => a.type === 'redis')) {
+      addonEntries.push(['REDIS_URL', `redis://dep-${id}-redis:6379`])
+    }
+  } catch { /* */ }
+
+  const allEnvEntries = [...addonEntries, ...envEntries]
+
   return (
     <div
       style={{
@@ -180,8 +194,8 @@ export function DeploymentRow({ deployment: dep }: Props) {
                 onClick={(e) => { e.stopPropagation(); setTab(t) }}
               >
                 {t === 'logs' ? 'Logs' : 'Environment'}
-                {t === 'env' && envEntries.length > 0 && (
-                  <span style={tabBadgeStyle}>{envEntries.length}</span>
+                {t === 'env' && allEnvEntries.length > 0 && (
+                  <span style={tabBadgeStyle}>{allEnvEntries.length}</span>
                 )}
               </button>
             ))}
@@ -190,16 +204,23 @@ export function DeploymentRow({ deployment: dep }: Props) {
           {tab === 'logs' && <LogPanel deploymentId={dep.id} />}
           {tab === 'env' && (
             <div style={envPanelStyle}>
-              {envEntries.length === 0 ? (
+              {allEnvEntries.length === 0 ? (
                 <span style={{ color: 'var(--text-muted)' as string, fontSize: 12 }}>
                   No environment variables.
                 </span>
               ) : (
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                   <tbody>
-                    {envEntries.map(([k, v]) => (
+                    {allEnvEntries.map(([k, v]) => (
                       <tr key={k} style={{ borderBottom: '0.5px solid var(--border-subtle)' as string }}>
-                        <td style={envKeyStyle}>{k}</td>
+                        <td style={envKeyStyle}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            {k}
+                            {addonEntries.some((a) => a[0] === k) && (
+                              <span style={injectedBadgeStyle}>injected</span>
+                            )}
+                          </span>
+                        </td>
                         <td style={envValStyle}><EnvValue value={v} /></td>
                       </tr>
                     ))}
@@ -418,6 +439,17 @@ const envKeyStyle: CSSProperties = {
   color: 'var(--text-muted)' as string,
   padding: '8px 16px',
   width: '38%',
+}
+
+const injectedBadgeStyle: CSSProperties = {
+  background: 'rgba(62,207,142,0.1)',
+  border: '0.5px solid rgba(62,207,142,0.2)',
+  borderRadius: 3,
+  color: 'var(--success)' as string,
+  fontFamily: 'var(--font-mono)' as string,
+  fontSize: 9,
+  fontWeight: 500,
+  padding: '1px 4px',
 }
 
 const envValStyle: CSSProperties = {

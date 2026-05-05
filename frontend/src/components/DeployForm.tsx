@@ -68,6 +68,7 @@ export function DeployForm() {
 
   return (
     <form onSubmit={submit} style={formStyle}>
+      <style>{`.addon-tip:hover .addon-tip-content { opacity: 1 !important; pointer-events: auto !important; }`}</style>
       {/* Input row */}
       <div style={inputRowStyle}>
         {/* Search-style URL input */}
@@ -93,34 +94,46 @@ export function DeployForm() {
         />
 
         {/* Postgres toggle */}
-        <button
-          type="button"
-          onClick={() => setAttachPostgres((v) => !v)}
-          title="Attach PostgreSQL"
-          style={{
-            ...envToggleStyle,
-            background: attachPostgres ? 'rgba(96,165,250,0.12)' : 'var(--bg-raised)',
-            borderColor: attachPostgres ? 'rgba(96,165,250,0.3)' : 'var(--border-subtle)',
-            color: attachPostgres ? '#60a5fa' : 'var(--text-secondary)',
-          } as CSSProperties}
-        >
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500 }}>PG</span>
-        </button>
+        <div className="addon-tip" style={tooltipWrapStyle}>
+          <button
+            type="button"
+            onClick={() => setAttachPostgres((v) => !v)}
+            style={{
+              ...envToggleStyle,
+              background: attachPostgres ? 'rgba(96,165,250,0.12)' : 'var(--bg-raised)',
+              borderColor: attachPostgres ? 'rgba(96,165,250,0.3)' : 'var(--border-subtle)',
+              color: attachPostgres ? '#60a5fa' : 'var(--text-secondary)',
+            } as CSSProperties}
+          >
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500 }}>PG</span>
+          </button>
+          <div className="addon-tip-content" style={tooltipStyle}>
+            <strong>PostgreSQL</strong><br />
+            Spins up a Postgres sidecar container.<br />
+            <span style={{ color: 'var(--success)' }}>DATABASE_URL</span> is injected automatically.
+          </div>
+        </div>
 
         {/* Redis toggle */}
-        <button
-          type="button"
-          onClick={() => setAttachRedis((v) => !v)}
-          title="Attach Redis"
-          style={{
-            ...envToggleStyle,
-            background: attachRedis ? 'rgba(245,166,35,0.12)' : 'var(--bg-raised)',
-            borderColor: attachRedis ? 'rgba(245,166,35,0.3)' : 'var(--border-subtle)',
-            color: attachRedis ? 'var(--warning)' : 'var(--text-secondary)',
-          } as CSSProperties}
-        >
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500 }}>RD</span>
-        </button>
+        <div className="addon-tip" style={tooltipWrapStyle}>
+          <button
+            type="button"
+            onClick={() => setAttachRedis((v) => !v)}
+            style={{
+              ...envToggleStyle,
+              background: attachRedis ? 'rgba(245,166,35,0.12)' : 'var(--bg-raised)',
+              borderColor: attachRedis ? 'rgba(245,166,35,0.3)' : 'var(--border-subtle)',
+              color: attachRedis ? 'var(--warning)' : 'var(--text-secondary)',
+            } as CSSProperties}
+          >
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500 }}>RD</span>
+          </button>
+          <div className="addon-tip-content" style={tooltipStyle}>
+            <strong>Redis</strong><br />
+            Spins up a Redis sidecar container.<br />
+            <span style={{ color: 'var(--warning)' }}>REDIS_URL</span> is injected automatically.
+          </div>
+        </div>
 
         {/* Env toggle */}
         <button
@@ -408,4 +421,28 @@ const addVarBtnStyle: CSSProperties = {
   marginTop: 4,
   padding: '3px 0',
   transition: 'color 0.15s',
+}
+
+const tooltipWrapStyle: CSSProperties = {
+  position: 'relative' as const,
+}
+
+const tooltipStyle: CSSProperties = {
+  background: 'var(--bg-surface)' as string,
+  border: '0.5px solid var(--border-default)' as string,
+  borderRadius: 8,
+  bottom: 'calc(100% + 8px)',
+  boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+  color: 'var(--text-secondary)' as string,
+  fontSize: 11,
+  left: '50%',
+  lineHeight: 1.5,
+  opacity: 0,
+  padding: '8px 10px',
+  pointerEvents: 'none' as const,
+  position: 'absolute' as const,
+  transform: 'translateX(-50%)',
+  transition: 'opacity 0.15s',
+  whiteSpace: 'nowrap' as const,
+  zIndex: 50,
 }
