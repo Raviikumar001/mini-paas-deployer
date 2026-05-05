@@ -1,4 +1,5 @@
 const CADDY_ADMIN = process.env.CADDY_ADMIN ?? 'http://localhost:2019'
+const BASE_DOMAIN = process.env.BASE_DOMAIN || 'localhost'
 
 const HEADERS = {
   'Content-Type': 'application/json',
@@ -29,6 +30,34 @@ async function caddyDelete(path: string): Promise<void> {
 }
 
 
+export async function registerStaticRoutes(): Promise<void> {
+  const apiRoute = {
+    '@id': 'api',
+    match: [{ host: [BASE_DOMAIN], path: ['/api/*'] }],
+    handle: [
+      { handler: 'reverse_proxy', upstreams: [{ dial: 'backend:3001' }] },
+    ],
+  }
+
+  const frontendRoute = {
+    '@id': 'frontend',
+    match: [{ host: [BASE_DOMAIN] }],
+    handle: [
+      { handler: 'reverse_proxy', upstreams: [{ dial: 'frontend:5173' }] },
+    ],
+  }
+
+  // Idempotent: delete old routes first in case of restart,
+  // then re-add them in priority order (API before frontend so /api/* matches first).
+  await caddyDelete('/id/api').catch(() => {})
+  await caddyPost('/config/apps/http/servers/srv0/routes', apiRoute)
+  await caddyDelete('/id/frontend').catch(() => {})
+  await caddyPost('/config/apps/http/servers/srv0/routes', frontendRoute)
+
+  console.log(`Caddy static routes registered for ${BASE_DOMAIN}`)
+}
+
+
 export async function addRoute(
   deploymentId: string,
   subdomain: string,
@@ -37,7 +66,7 @@ export async function addRoute(
 ): Promise<void> {
   const route = {
     '@id': `dep-${deploymentId}`,
-    match: [{ host: [`${subdomain}.localhost`] }],
+    match: [{ host: [`${subdomain}.${BASE_DOMAIN}`] }],
     handle: [
       { handler: 'reverse_proxy', upstreams: [{ dial: `${containerName}:${port}` }] },
     ],

@@ -48,6 +48,7 @@ services:
       DOCKER_NETWORK: brimble_net
       BUILDKIT_HOST: docker-container://buildkit
       PORT: 3001
+      BASE_DOMAIN: "${BASE_DOMAIN:-localhost}"
     depends_on:
       - caddy
       - buildkit

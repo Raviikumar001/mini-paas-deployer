@@ -7,6 +7,7 @@ import { deploymentRoutes } from './routes/deployments.js'
 import { logsRoute } from './routes/logs.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { reconcile } from './services/reconcile.js'
+import { registerStaticRoutes } from './services/caddy.js'
 
 const app = new Hono()
 
@@ -22,6 +23,7 @@ api.get('/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }))
 app.route('/api', api)
 
 initDb()
+registerStaticRoutes().catch((err) => console.error('caddy static routes error:', err))
 reconcile().catch((err) => console.error('reconcile error:', err))
 
 const port = Number(process.env.PORT ?? 3001)

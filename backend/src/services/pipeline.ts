@@ -94,7 +94,8 @@ export async function runPipeline(
     const subdomain = toSubdomain(name, id, branch)
     await addRoute(deploymentId, subdomain, containerName, appPort)
 
-    const url = `http://${subdomain}.localhost`
+    const baseDomain = process.env.BASE_DOMAIN || 'localhost'
+    const url = `http://${subdomain}.${baseDomain}`
     updateDeployment(deploymentId, { status: 'running', url })
     emitStatus(deploymentId, 'running')
     emitLog(deploymentId, 'system', `Live → ${url}`)
@@ -183,7 +184,8 @@ export async function runRedeployPipeline(
     await stopAndRemove(oldContainerName).catch(() => {})
 
     const subdomain = toSubdomain(name, id, branch)
-    const url = `http://${subdomain}.localhost`
+    const baseDomain = process.env.BASE_DOMAIN || 'localhost'
+    const url = `http://${subdomain}.${baseDomain}`
     updateDeployment(deploymentId, {
       status: 'running',
       url,
