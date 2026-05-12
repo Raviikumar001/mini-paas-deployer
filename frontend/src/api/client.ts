@@ -12,6 +12,7 @@ export interface Deployment {
   app_port: number
   url: string | null
   env_vars: string   // JSON-encoded Record<string,string>
+  secret_env_keys: string[]
   addons: string     // JSON-encoded Array<{ type: string }>
   error: string | null
   created_at: string
@@ -57,6 +58,7 @@ export const api = {
     create: (params: {
       gitUrl: string
       envVars?: Record<string, string>
+      secretEnvVars?: Record<string, string>
       branch?: string
       addons?: Array<{ type: 'postgres' | 'redis' }>
     }): Promise<Deployment> =>
@@ -66,11 +68,15 @@ export const api = {
         body: JSON.stringify(params),
       }).then(handle<Deployment>),
 
-    redeploy: (id: string, envVars?: Record<string, string>): Promise<Deployment> =>
+    redeploy: (
+      id: string,
+      envVars?: Record<string, string>,
+      secretEnvVars?: Record<string, string>,
+    ): Promise<Deployment> =>
       fetch(`${BASE}/deployments/${id}/redeploy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ envVars }),
+        body: JSON.stringify({ envVars, secretEnvVars }),
       }).then(handle<Deployment>),
 
     remove: (id: string): Promise<void> =>

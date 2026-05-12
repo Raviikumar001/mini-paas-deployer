@@ -3,6 +3,7 @@ import { customAlphabet } from 'nanoid'
 import {
   createDeployment,
   deleteDeployment,
+  type Deployment,
   getDeployment,
   listDeployments,
   updateDeployment,
@@ -24,6 +25,27 @@ const DEPLOYMENT_BODY_LIMIT = 64 * 1024
 
 export const deploymentRoutes = new Hono()
 
+type PublicDeployment = Omit<Deployment, 'secret_env_vars'> & {
+  secret_env_keys: string[]
+}
+
+function parseRecord(raw: string | null | undefined): Record<string, string> {
+  if (!raw) return {}
+  try {
+    return JSON.parse(raw) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+function toPublicDeployment(dep: Deployment): PublicDeployment {
+  const { secret_env_vars: secretEnvVars, ...publicDep } = dep
+  return {
+    ...publicDep,
+    secret_env_keys: Object.keys(parseRecord(secretEnvVars)),
+  }
+}
+
 
 deploymentRoutes.post('/', async (c) => {
   const lengthError = ensureRequestSize(c.req.header('content-length'), DEPLOYMENT_BODY_LIMIT)
@@ -36,6 +58,7 @@ deploymentRoutes.post('/', async (c) => {
   const parsed = parseJsonBody<{
     gitUrl?: string
     envVars?: Record<string, string>
+    secretEnvVars?: Record<string, string>
     branch?: string
     addons?: Array<{ type: 'postgres' | 'redis' }>
   }>(rawBody)
@@ -48,27 +71,29 @@ deploymentRoutes.post('/', async (c) => {
   if (!gitUrl.ok) return c.json({ error: gitUrl.error }, 400)
 
   const envVars = body.envVars ?? {}
+  const secretEnvVars = body.secretEnvVars ?? {}
+  const mergedEnvVars = { ...envVars, ...secretEnvVars }
   const branch = body.branch?.trim() || 'main'
   const addons = body.addons ?? []
   const name = gitUrl.url.pathname.split('/').filter(Boolean).pop()?.replace(/\.git$/, '') ?? 'deployment'
   const id = nanoid(10)
-  const deployment = createDeployment(id, name, body.gitUrl, envVars, branch, addons)
+  const deployment = createDeployment(id, name, body.gitUrl, envVars, secretEnvVars, branch, addons)
 
-  runPipeline(id, body.gitUrl, name, envVars, branch, addons).catch((err) => {
+  runPipeline(id, body.gitUrl, name, mergedEnvVars, branch, addons).catch((err) => {
     updateDeployment(id, { status: 'failed', error: String(err) })
   })
 
-  return c.json(deployment, 202)
+  return c.json(toPublicDeployment(deployment), 202)
 })
 
 
-deploymentRoutes.get('/', (c) => c.json(listDeployments()))
+deploymentRoutes.get('/', (c) => c.json(listDeployments().map(toPublicDeployment)))
 
 
 deploymentRoutes.get('/:id', (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
-  return c.json(dep)
+  return c.json(toPublicDeployment(dep))
 })
 
 
@@ -109,23 +134,26 @@ deploymentRoutes.post('/:id/redeploy', async (c) => {
   if (bodySizeError) return c.json({ error: bodySizeError }, 413)
 
   const body = rawBody
-    ? parseJsonBody<{ envVars?: Record<string, string> }>(rawBody)
-    : { envVars: undefined }
+    ? parseJsonBody<{ envVars?: Record<string, string>; secretEnvVars?: Record<string, string> }>(rawBody)
+    : { envVars: undefined, secretEnvVars: undefined }
   if ('error' in body) return c.json({ error: body.error }, 400)
-  const envVars = body.envVars ?? (JSON.parse(dep.env_vars || '{}') as Record<string, string>)
+  const envVars = body.envVars ?? parseRecord(dep.env_vars)
+  const secretEnvVars = body.secretEnvVars ?? parseRecord(dep.secret_env_vars)
+  const mergedEnvVars = { ...envVars, ...secretEnvVars }
 
 
   updateDeployment(dep.id, {
     status: 'redeploying',
     env_vars: JSON.stringify(envVars),
+    secret_env_vars: JSON.stringify(secretEnvVars),
     error: null,
   })
 
   const oldContainerName = dep.container_name ?? ''
   const addons: Array<{ type: 'postgres' | 'redis' }> = dep.addons ? JSON.parse(dep.addons) : []
-  runRedeployPipeline(dep.id, dep.source_url, dep.name, oldContainerName, envVars, dep.branch ?? undefined, addons).catch((err) => {
+  runRedeployPipeline(dep.id, dep.source_url, dep.name, oldContainerName, mergedEnvVars, dep.branch ?? undefined, addons).catch((err) => {
     updateDeployment(dep.id, { status: 'failed', error: String(err) })
   })
 
-  return c.json(getDeployment(dep.id))
+  return c.json(toPublicDeployment(getDeployment(dep.id)!))
 })

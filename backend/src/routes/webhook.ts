@@ -110,6 +110,7 @@ webhookRoutes.post('/github', async (c) => {
     }
 
     const envVars = JSON.parse(existing.env_vars || '{}') as Record<string, string>
+    const secretEnvVars = JSON.parse(existing.secret_env_vars || '{}') as Record<string, string>
     const addons = existing.addons ? JSON.parse(existing.addons) as Array<{ type: 'postgres' | 'redis' }> : []
 
     updateDeployment(existing.id, {
@@ -122,7 +123,7 @@ webhookRoutes.post('/github', async (c) => {
       existing.source_url!,
       existing.name,
       existing.container_name ?? '',
-      envVars,
+      { ...envVars, ...secretEnvVars },
       existing.branch ?? undefined,
       addons,
     ).catch((err) => {
@@ -135,7 +136,7 @@ webhookRoutes.post('/github', async (c) => {
   // Create new deployment for this branch
   const name = payload.repository?.name ?? 'deployment'
   const id = nanoid(10)
-  const deployment = createDeployment(id, name, gitUrl, {}, branch)
+  const deployment = createDeployment(id, name, gitUrl, {}, {}, branch)
 
   runPipeline(id, gitUrl, name, {}, branch).catch((err) => {
     updateDeployment(id, { status: 'failed', error: String(err) })

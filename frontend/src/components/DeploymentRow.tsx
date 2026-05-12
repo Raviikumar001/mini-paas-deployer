@@ -5,6 +5,7 @@ import { useDeleteDeployment, useRedeployment } from '../hooks/useDeployments'
 import { LogPanel } from './LogPanel'
 
 const ACTIVE = new Set<DeploymentStatus>(['pending', 'building', 'deploying', 'redeploying'])
+type EnvEntry = { key: string; value: string | null; kind: 'plain' | 'secret' | 'injected' }
 
 const STATUS_CONFIG: Record<DeploymentStatus, {
   label: string; color: string; bg: string; dot: string; pulse: boolean
@@ -50,22 +51,37 @@ export function DeploymentRow({ deployment: dep }: Props) {
   const canOpen = (dep.status === 'running' || dep.status === 'redeploying') && dep.url
   const cfg = STATUS_CONFIG[dep.status]
 
-  let envEntries: [string, string][] = []
-  try { envEntries = Object.entries(JSON.parse(dep.env_vars || '{}')) } catch { /* */ }
+  let envEntries: EnvEntry[] = []
+  try {
+    envEntries = Object.entries(JSON.parse(dep.env_vars || '{}')).map(([key, value]) => ({
+      key,
+      value: String(value),
+      kind: 'plain',
+    }))
+  } catch { /* */ }
 
-  let addonEntries: [string, string][] = []
+  let addonEntries: EnvEntry[] = []
   try {
     const addons = JSON.parse(dep.addons || '[]') as Array<{ type: string }>
     const id = dep.id.toLowerCase().replace(/[^a-z0-9]/g, '')
     if (addons.some((a) => a.type === 'postgres')) {
-      addonEntries.push(['DATABASE_URL', `postgres://brimble:brimble@dep-${id}-db:5432/brimble`])
+      addonEntries.push({
+        key: 'DATABASE_URL',
+        value: `postgres://brimble:brimble@dep-${id}-db:5432/brimble`,
+        kind: 'injected',
+      })
     }
     if (addons.some((a) => a.type === 'redis')) {
-      addonEntries.push(['REDIS_URL', `redis://dep-${id}-redis:6379`])
+      addonEntries.push({
+        key: 'REDIS_URL',
+        value: `redis://dep-${id}-redis:6379`,
+        kind: 'injected',
+      })
     }
   } catch { /* */ }
 
-  const allEnvEntries = [...addonEntries, ...envEntries]
+  const secretEntries = (dep.secret_env_keys ?? []).map((key) => ({ key, value: null, kind: 'secret' as const }))
+  const allEnvEntries = [...addonEntries, ...envEntries, ...secretEntries]
 
   return (
     <div
@@ -211,17 +227,24 @@ export function DeploymentRow({ deployment: dep }: Props) {
               ) : (
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                   <tbody>
-                    {allEnvEntries.map(([k, v]) => (
-                      <tr key={k} style={{ borderBottom: '0.5px solid var(--border-subtle)' as string }}>
+                    {allEnvEntries.map((entry) => (
+                      <tr key={`${entry.kind}-${entry.key}`} style={{ borderBottom: '0.5px solid var(--border-subtle)' as string }}>
                         <td style={envKeyStyle}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                            {k}
-                            {addonEntries.some((a) => a[0] === k) && (
+                            {entry.key}
+                            {entry.kind === 'injected' && (
                               <span style={injectedBadgeStyle}>injected</span>
+                            )}
+                            {entry.kind === 'secret' && (
+                              <span style={secretBadgeStyle}>secret</span>
                             )}
                           </span>
                         </td>
-                        <td style={envValStyle}><EnvValue value={v} /></td>
+                        <td style={envValStyle}>
+                          {entry.kind === 'secret'
+                            ? <SecretValue />
+                            : <EnvValue value={entry.value ?? ''} />}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -232,6 +255,15 @@ export function DeploymentRow({ deployment: dep }: Props) {
         </>
       )}
     </div>
+  )
+}
+
+function SecretValue() {
+  return (
+    <span style={{ alignItems: 'center', display: 'inline-flex', gap: 6 }}>
+      <span style={{ color: 'var(--text-muted)' as string, letterSpacing: 2 }}>••••••••••••</span>
+      <EyeOff size={11} color="var(--text-muted)" />
+    </span>
   )
 }
 
@@ -446,6 +478,17 @@ const injectedBadgeStyle: CSSProperties = {
   border: '0.5px solid rgba(62,207,142,0.2)',
   borderRadius: 3,
   color: 'var(--success)' as string,
+  fontFamily: 'var(--font-mono)' as string,
+  fontSize: 9,
+  fontWeight: 500,
+  padding: '1px 4px',
+}
+
+const secretBadgeStyle: CSSProperties = {
+  background: 'rgba(232,255,71,0.08)',
+  border: '0.5px solid rgba(232,255,71,0.18)',
+  borderRadius: 3,
+  color: 'var(--accent)' as string,
   fontFamily: 'var(--font-mono)' as string,
   fontSize: 9,
   fontWeight: 500,

@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type CSSProperties } from 'react'
-import { Search, SlidersHorizontal, Plus, X, Rocket } from 'lucide-react'
+import { Search, SlidersHorizontal, Plus, X, Rocket, Lock, Unlock } from 'lucide-react'
 import { useCreateDeployment } from '../hooks/useDeployments'
 
 function parseEnvFile(raw: string): EnvPair[] {
@@ -17,14 +17,24 @@ function parseEnvFile(raw: string): EnvPair[] {
         (value.startsWith('"') && value.endsWith('"')) ||
         (value.startsWith("'") && value.endsWith("'"))
       ) value = value.slice(1, -1)
-      return [{ key, value }]
+      return [{ key, value, secret: false }]
     })
 }
 
-interface EnvPair { key: string; value: string }
+interface EnvPair { key: string; value: string; secret: boolean }
 
-function pairsToRecord(pairs: EnvPair[]): Record<string, string> {
-  return Object.fromEntries(pairs.filter((p) => p.key).map((p) => [p.key, p.value]))
+function splitPairs(pairs: EnvPair[]): {
+  envVars: Record<string, string>
+  secretEnvVars: Record<string, string>
+} {
+  const envVars: Record<string, string> = {}
+  const secretEnvVars: Record<string, string> = {}
+  for (const pair of pairs) {
+    if (!pair.key) continue
+    if (pair.secret) secretEnvVars[pair.key] = pair.value
+    else envVars[pair.key] = pair.value
+  }
+  return { envVars, secretEnvVars }
 }
 
 export function DeployForm() {
@@ -43,14 +53,16 @@ export function DeployForm() {
     const trimmed = url.trim()
     if (!trimmed) return
     const envPairs = pasteMode ? parseEnvFile(pasteText) : pairs
-    const envVars = pairsToRecord(envPairs)
+    const { envVars, secretEnvVars } = splitPairs(envPairs)
     const params: {
       gitUrl: string
       envVars?: Record<string, string>
+      secretEnvVars?: Record<string, string>
       branch?: string
       addons?: Array<{ type: 'postgres' | 'redis' }>
     } = { gitUrl: trimmed }
     if (Object.keys(envVars).length) params.envVars = envVars
+    if (Object.keys(secretEnvVars).length) params.secretEnvVars = secretEnvVars
     if (branch.trim()) params.branch = branch.trim()
     const addons: Array<{ type: 'postgres' | 'redis' }> = []
     if (attachPostgres) addons.push({ type: 'postgres' })
@@ -59,10 +71,12 @@ export function DeployForm() {
     mutate(params, { onSuccess: () => { setUrl(''); setBranch(''); setPairs([]); setPasteText(''); setAttachPostgres(false); setAttachRedis(false) } })
   }
 
-  const addPair = () => setPairs((p) => [...p, { key: '', value: '' }])
+  const addPair = () => setPairs((p) => [...p, { key: '', value: '', secret: false }])
   const removePair = (i: number) => setPairs((p) => p.filter((_, idx) => idx !== i))
   const updatePair = (i: number, field: 'key' | 'value', val: string) =>
     setPairs((p) => p.map((pair, idx) => idx === i ? { ...pair, [field]: val } : pair))
+  const toggleSecret = (i: number) =>
+    setPairs((p) => p.map((pair, idx) => idx === i ? { ...pair, secret: !pair.secret } : pair))
 
   const envCount = (pasteMode ? parseEnvFile(pasteText) : pairs).filter((p) => p.key).length
 
@@ -222,14 +236,27 @@ export function DeployForm() {
                     placeholder="KEY"
                     value={pair.key}
                     onChange={(e) => updatePair(i, 'key', e.target.value)}
-                    style={{ ...kvInputStyle, flex: '0 0 36%' }}
+                    style={{ ...kvInputStyle, flex: '0 0 32%' }}
                   />
                   <input
                     placeholder="value"
+                    type={pair.secret ? 'password' : 'text'}
                     value={pair.value}
                     onChange={(e) => updatePair(i, 'value', e.target.value)}
                     style={{ ...kvInputStyle, flex: 1 }}
                   />
+                  <button
+                    type="button"
+                    onClick={() => toggleSecret(i)}
+                    title={pair.secret ? 'Stored as secret' : 'Stored as plain env'}
+                    style={{
+                      ...secretVarBtnStyle,
+                      color: pair.secret ? 'var(--accent)' : 'var(--text-muted)',
+                      borderColor: pair.secret ? 'rgba(232,255,71,0.28)' : 'var(--border-subtle)',
+                    } as CSSProperties}
+                  >
+                    {pair.secret ? <Lock size={11} /> : <Unlock size={11} />}
+                  </button>
                   <button type="button" onClick={() => removePair(i)} style={removeVarBtnStyle}>
                     <X size={11} />
                   </button>
@@ -405,6 +432,17 @@ const removeVarBtnStyle: CSSProperties = {
   display: 'flex',
   padding: '0 8px',
   height: 32,
+}
+
+const secretVarBtnStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'none',
+  border: '0.5px solid',
+  borderRadius: 6,
+  cursor: 'pointer',
+  display: 'flex',
+  height: 32,
+  padding: '0 8px',
 }
 
 const addVarBtnStyle: CSSProperties = {

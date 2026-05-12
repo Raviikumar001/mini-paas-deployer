@@ -13,10 +13,10 @@ Why it matters for Encore: platform automation should be easy to use, but not ca
 
 ## 2. Safer Secrets And Environment Variables
 
-- [ ] Split plain environment variables from secret variables in the API.
-- [ ] Mask secrets in the UI by default and avoid returning secret values from list endpoints.
-- [ ] Preserve secrets across redeploys without exposing them in deployment JSON.
-- [ ] Add tests for secret update and redeploy behavior.
+- [x] Split plain environment variables from secret variables in the API.
+- [x] Mask secrets in the UI by default and avoid returning secret values from list endpoints.
+- [x] Preserve secrets across redeploys without exposing them in deployment JSON.
+- [x] Add tests for secret update and redeploy behavior.
 
 Why it matters for Encore: teams need self-service infrastructure with guardrails, not just convenience.
 

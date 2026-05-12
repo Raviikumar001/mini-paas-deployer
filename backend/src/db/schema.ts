@@ -21,6 +21,7 @@ export interface Deployment {
   app_port: number
   url: string | null
   env_vars: string   // JSON-encoded Record<string, string>
+  secret_env_vars: string // JSON-encoded Record<string, string>
   addons: string     // JSON-encoded Addon[]
   error: string | null
   created_at: string
@@ -85,6 +86,10 @@ export function initDb(): void {
   } catch { /* column already exists */ }
 
   try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN secret_env_vars TEXT NOT NULL DEFAULT '{}'`)
+  } catch { /* column already exists */ }
+
+  try {
     getDb().exec(`ALTER TABLE deployments ADD COLUMN branch TEXT DEFAULT 'main'`)
   } catch { /* column already exists */ }
 
@@ -100,16 +105,27 @@ export function createDeployment(
   name: string,
   sourceUrl: string | null,
   envVars: Record<string, string> = {},
+  secretEnvVars: Record<string, string> = {},
   branch = 'main',
   addons: Addon[] = [],
 ): Deployment {
   const now = new Date().toISOString()
   getDb()
     .prepare(
-      `INSERT INTO deployments (id, name, source_url, branch, status, env_vars, addons, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+      `INSERT INTO deployments (id, name, source_url, branch, status, env_vars, secret_env_vars, addons, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
     )
-    .run(id, name, sourceUrl, branch, JSON.stringify(envVars), JSON.stringify(addons), now, now)
+    .run(
+      id,
+      name,
+      sourceUrl,
+      branch,
+      JSON.stringify(envVars),
+      JSON.stringify(secretEnvVars),
+      JSON.stringify(addons),
+      now,
+      now,
+    )
   return getDeployment(id)!
 }
 
