@@ -1,36 +1,54 @@
-import { useState, useEffect, type CSSProperties } from 'react'
-import { ExternalLink, RotateCcw, Trash2, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react'
+import { useEffect, useState, type CSSProperties } from 'react'
+import {
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react'
 import type { Deployment, DeploymentStatus } from '../api/client'
 import { useDeleteDeployment, useRedeployment } from '../hooks/useDeployments'
 import { LogPanel } from './LogPanel'
 
 const ACTIVE = new Set<DeploymentStatus>(['pending', 'building', 'deploying', 'redeploying'])
-type EnvEntry = { key: string; value: string | null; kind: 'plain' | 'secret' | 'injected' }
+
+type EnvEntry = {
+  key: string
+  value: string | null
+  kind: 'plain' | 'secret' | 'injected'
+}
 
 const STATUS_CONFIG: Record<DeploymentStatus, {
-  label: string; color: string; bg: string; dot: string; pulse: boolean
+  label: string
+  tone: string
+  dot: string
 }> = {
-  pending:     { label: 'PENDING',     color: 'var(--text-muted)',  bg: 'rgba(82,80,77,0.12)',       dot: 'var(--text-muted)',  pulse: false },
-  building:    { label: 'BUILDING',    color: 'var(--warning)',     bg: 'rgba(245,166,35,0.10)',     dot: 'var(--warning)',     pulse: true  },
-  deploying:   { label: 'DEPLOYING',   color: '#60a5fa',            bg: 'rgba(96,165,250,0.10)',     dot: '#60a5fa',            pulse: true  },
-  running:     { label: 'LIVE',        color: 'var(--success)',     bg: 'rgba(62,207,142,0.10)',     dot: 'var(--success)',     pulse: false },
-  redeploying: { label: 'REDEPLOYING', color: '#a78bfa',            bg: 'rgba(167,139,250,0.10)',    dot: '#a78bfa',            pulse: true  },
-  failed:      { label: 'FAILED',      color: 'var(--danger)',      bg: 'rgba(245,101,101,0.10)',    dot: 'var(--danger)',      pulse: false },
-  stopped:     { label: 'STOPPED',     color: 'var(--text-muted)',  bg: 'rgba(82,80,77,0.08)',       dot: 'var(--text-muted)',  pulse: false },
+  pending: { label: 'Pending', tone: 'var(--ink-muted)', dot: 'var(--ink-muted)' },
+  building: { label: 'Building', tone: 'var(--warning)', dot: 'var(--warning)' },
+  deploying: { label: 'Deploying', tone: 'var(--blue)', dot: 'var(--blue)' },
+  running: { label: 'Live', tone: 'var(--success)', dot: 'var(--success)' },
+  redeploying: { label: 'Redeploying', tone: 'var(--blue)', dot: 'var(--blue)' },
+  failed: { label: 'Failed', tone: 'var(--danger)', dot: 'var(--danger)' },
+  stopped: { label: 'Stopped', tone: 'var(--ink-muted)', dot: 'var(--ink-muted)' },
 }
 
 function timeAgo(iso: string): string {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 60)    return `${s}s ago`
-  if (s < 3600)  return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+  return `${Math.floor(seconds / 86400)}d ago`
 }
 
 function repoLabel(url: string | null): string {
   if (!url) return ''
-  try { return new URL(url).pathname.replace(/^\//, '').replace(/\.git$/, '') }
-  catch { return url }
+  try {
+    return new URL(url).pathname.replace(/^\//, '').replace(/\.git$/, '')
+  } catch {
+    return url
+  }
 }
 
 interface Props { deployment: Deployment }
@@ -39,237 +57,160 @@ type Tab = 'logs' | 'env'
 export function DeploymentRow({ deployment: dep }: Props) {
   const [expanded, setExpanded] = useState(() => ACTIVE.has(dep.status))
   const [tab, setTab] = useState<Tab>('logs')
-  const [hovered, setHovered] = useState(false)
   const { mutate: remove, isPending: removing } = useDeleteDeployment()
   const { mutate: redeploy, isPending: redeploying } = useRedeployment()
 
   useEffect(() => {
-    if (ACTIVE.has(dep.status)) { setExpanded(true); setTab('logs') }
+    if (ACTIVE.has(dep.status)) {
+      setExpanded(true)
+      setTab('logs')
+    }
   }, [dep.status])
 
+  const status = STATUS_CONFIG[dep.status]
+  const addonStatuses = dep.addon_statuses ?? []
   const canRedeploy = dep.status === 'running' || dep.status === 'failed' || dep.status === 'stopped'
   const canOpen = (dep.status === 'running' || dep.status === 'redeploying') && dep.url
-  const cfg = STATUS_CONFIG[dep.status]
-  const addonStatuses = dep.addon_statuses ?? []
-
-  let envEntries: EnvEntry[] = []
-  try {
-    envEntries = Object.entries(JSON.parse(dep.env_vars || '{}')).map(([key, value]) => ({
-      key,
-      value: String(value),
-      kind: 'plain',
-    }))
-  } catch { /* */ }
-
-  let addonEntries: EnvEntry[] = []
-  try {
-    const id = dep.id.toLowerCase().replace(/[^a-z0-9]/g, '')
-    if (addonStatuses.some((a) => a.type === 'postgres')) {
-      addonEntries.push({
-        key: 'DATABASE_URL',
-        value: `postgres://brimble:brimble@dep-${id}-db:5432/brimble`,
-        kind: 'injected',
-      })
-    }
-    if (addonStatuses.some((a) => a.type === 'redis')) {
-      addonEntries.push({
-        key: 'REDIS_URL',
-        value: `redis://dep-${id}-redis:6379`,
-        kind: 'injected',
-      })
-    }
-  } catch { /* */ }
-
-  const secretEntries = (dep.secret_env_keys ?? []).map((key) => ({ key, value: null, kind: 'secret' as const }))
-  const allEnvEntries = [...addonEntries, ...envEntries, ...secretEntries]
+  const allEnvEntries = buildEnvEntries(dep)
 
   return (
-    <div
-      style={{
-        ...cardStyle,
-        borderColor: hovered ? 'var(--border-default)' : 'var(--border-subtle)',
-        transform: hovered ? 'translateY(-1px)' : 'translateY(0)',
-      } as CSSProperties}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div
-        style={headerStyle}
-        onClick={() => setExpanded((v) => !v)}
-        role="button"
-        aria-expanded={expanded}
-      >
-        {/* Left: dot + name + meta */}
-        <div style={{ alignItems: 'center', display: 'flex', flex: 1, gap: 10, minWidth: 0 }}>
-          {/* Status dot */}
-          <span
-            className={cfg.pulse ? 'pulse-dot' : undefined}
-            style={{ ...dotStyle, background: cfg.dot as string }}
-          />
-
-          {/* Name + meta */}
+    <article style={rowStyle}>
+      <div style={summaryStyle} onClick={() => setExpanded((value) => !value)} role="button" aria-expanded={expanded}>
+        <div style={serviceStyle}>
+          <span style={{ ...statusDotStyle, background: status.dot }} className={ACTIVE.has(dep.status) ? 'pulse-dot' : undefined} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ alignItems: 'center', display: 'flex', gap: 8 }}>
-              <span style={{
-                ...nameStyle,
-                color: hovered ? 'var(--accent)' : 'var(--text-primary)',
-              } as CSSProperties}>
-                {dep.name}
-              </span>
-              {dep.branch && dep.branch !== 'main' && (
-                <span style={branchBadgeStyle}>{dep.branch}</span>
-              )}
+            <div style={titleLineStyle}>
+              <strong style={serviceNameStyle}>{dep.name}</strong>
+              {dep.branch && <span style={branchStyle}>{dep.branch}</span>}
               {addonStatuses.map((addon) => (
-                <span
-                  key={addon.type}
-                  style={addon.type === 'postgres' ? pgAddonBadgeStyle : redisAddonBadgeStyle}
-                  title={`${addon.connectionEnv} ${addon.status}${addon.persistent ? ', persistent' : ''}`}
-                >
+                <span key={addon.type} style={addon.type === 'postgres' ? postgresBadgeStyle : redisBadgeStyle}>
                   {addon.type === 'postgres' ? 'PG' : 'RD'}
                   <span style={{
-                    ...addonStatusDotStyle,
-                    background: addon.status === 'running' ? 'var(--success)' : 'var(--text-muted)',
-                  } as CSSProperties} />
+                    ...smallDotStyle,
+                    background: addon.status === 'running' ? 'var(--success)' : 'var(--ink-muted)',
+                  }} />
                 </span>
               ))}
-              {dep.status === 'redeploying' && (
-                <span style={rebuildBadgeStyle}>
-                  <span className="pulse-dot" style={{ ...dotStyle, background: '#a78bfa', height: 5, width: 5 }} />
-                  rebuilding
-                </span>
-              )}
             </div>
             <div style={metaStyle}>
-              <span style={{ color: 'var(--text-muted)' as string }}>{repoLabel(dep.source_url)}</span>
-              <span style={{ color: 'var(--border-subtle)' as string }}>·</span>
+              <span>{repoLabel(dep.source_url)}</span>
+              <span>/</span>
               <span>{timeAgo(dep.created_at)}</span>
-              {dep.error && (
-                <span style={{ color: 'var(--danger)' as string }} title={dep.error}>
-                  — {dep.error.slice(0, 52)}{dep.error.length > 52 ? '…' : ''}
-                </span>
-              )}
+              {dep.error && <span style={errorMetaStyle}>{dep.error.slice(0, 64)}</span>}
             </div>
           </div>
         </div>
 
-        {/* Right: status badge + actions */}
-        <div
-          style={{ alignItems: 'center', display: 'flex', flexShrink: 0, gap: 6 }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Status badge */}
-          <span style={{ ...statusBadgeStyle, background: cfg.bg as string, color: cfg.color as string }}>
-            {cfg.label}
-          </span>
-
+        <div style={actionsStyle} onClick={(e) => e.stopPropagation()}>
+          <span style={{ ...statusBadgeStyle, color: status.tone }}>{status.label}</span>
           {canOpen && (
             <a href={dep.url!} target="_blank" rel="noopener noreferrer" style={openLinkStyle}>
-              <ExternalLink size={12} />
+              <ExternalLink size={14} />
               Open
             </a>
           )}
           {canRedeploy && (
-            <button
-              disabled={redeploying}
-              onClick={() => redeploy({ id: dep.id })}
-              style={{ ...iconBtnStyle, opacity: redeploying ? 0.4 : 1 }}
-              title="Redeploy"
-            >
-              <RotateCcw size={12} />
+            <button type="button" disabled={redeploying} onClick={() => redeploy({ id: dep.id })} style={iconButtonStyle} title="Redeploy">
+              <RotateCcw size={15} />
             </button>
           )}
-          <button style={iconBtnStyle} onClick={() => setExpanded((v) => !v)}>
-            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          <button type="button" onClick={() => setExpanded((value) => !value)} style={iconButtonStyle} title="Toggle details">
+            {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
           </button>
-          <button
-            disabled={removing}
-            onClick={() => remove(dep.id)}
-            style={{ ...iconBtnStyle, opacity: removing ? 0.4 : 1 }}
-            title="Delete"
-          >
-            <Trash2 size={12} />
+          <button type="button" disabled={removing} onClick={() => remove(dep.id)} style={dangerButtonStyle} title="Delete">
+            <Trash2 size={15} />
           </button>
         </div>
       </div>
 
-      {/* ── Expanded ─────────────────────────────────────────────────────────── */}
       {expanded && (
-        <>
-          <div style={tabBarStyle}>
-            {(['logs', 'env'] as Tab[]).map((t) => (
-              <button
-                key={t}
-                style={{
-                  ...tabStyle,
-                  ...(tab === t ? tabActiveStyle : {}),
-                } as CSSProperties}
-                onClick={(e) => { e.stopPropagation(); setTab(t) }}
-              >
-                {t === 'logs' ? 'Logs' : 'Environment'}
-                {t === 'env' && allEnvEntries.length > 0 && (
-                  <span style={tabBadgeStyle}>{allEnvEntries.length}</span>
-                )}
-              </button>
-            ))}
+        <div style={detailsStyle}>
+          <div style={tabsStyle}>
+            <button type="button" onClick={() => setTab('logs')} style={tab === 'logs' ? activeTabStyle : tabStyle}>Logs</button>
+            <button type="button" onClick={() => setTab('env')} style={tab === 'env' ? activeTabStyle : tabStyle}>
+              Environment
+              {allEnvEntries.length > 0 && <span style={tabCountStyle}>{allEnvEntries.length}</span>}
+            </button>
           </div>
 
-          {tab === 'logs' && <LogPanel deploymentId={dep.id} />}
-          {tab === 'env' && (
-            <div style={envPanelStyle}>
-              {allEnvEntries.length === 0 ? (
-                <span style={{ color: 'var(--text-muted)' as string, fontSize: 12 }}>
-                  No environment variables.
-                </span>
-              ) : (
-                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-                  <tbody>
-                    {allEnvEntries.map((entry) => (
-                      <tr key={`${entry.kind}-${entry.key}`} style={{ borderBottom: '0.5px solid var(--border-subtle)' as string }}>
-                        <td style={envKeyStyle}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                            {entry.key}
-                            {entry.kind === 'injected' && (() => {
-                              const addon = addonStatuses.find((a) => a.connectionEnv === entry.key)
-                              return (
-                                <>
-                                  <span style={injectedBadgeStyle}>injected</span>
-                                  {addon && (
-                                    <span style={addon.status === 'running' ? addonRunningBadgeStyle : addonStoppedBadgeStyle}>
-                                      {addon.status}{addon.persistent ? ' / disk' : ''}
-                                    </span>
-                                  )}
-                                </>
-                              )
-                            })()}
-                            {entry.kind === 'secret' && (
-                              <span style={secretBadgeStyle}>secret</span>
-                            )}
-                          </span>
-                        </td>
-                        <td style={envValStyle}>
-                          {entry.kind === 'secret'
-                            ? <SecretValue />
-                            : <EnvValue value={entry.value ?? ''} />}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+          {tab === 'logs' ? (
+            <LogPanel deploymentId={dep.id} />
+          ) : (
+            <EnvironmentTable entries={allEnvEntries} addons={addonStatuses} />
           )}
-        </>
+        </div>
       )}
+    </article>
+  )
+}
+
+function buildEnvEntries(dep: Deployment): EnvEntry[] {
+  const entries: EnvEntry[] = []
+  const addons = dep.addon_statuses ?? []
+  const id = dep.id.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+  if (addons.some((addon) => addon.type === 'postgres')) {
+    entries.push({
+      key: 'DATABASE_URL',
+      value: `postgres://brimble:brimble@dep-${id}-db:5432/brimble`,
+      kind: 'injected',
+    })
+  }
+  if (addons.some((addon) => addon.type === 'redis')) {
+    entries.push({
+      key: 'REDIS_URL',
+      value: `redis://dep-${id}-redis:6379`,
+      kind: 'injected',
+    })
+  }
+
+  try {
+    for (const [key, value] of Object.entries(JSON.parse(dep.env_vars || '{}'))) {
+      entries.push({ key, value: String(value), kind: 'plain' })
+    }
+  } catch {
+    // Ignore malformed legacy env JSON in the presentation layer.
+  }
+
+  for (const key of dep.secret_env_keys ?? []) {
+    entries.push({ key, value: null, kind: 'secret' })
+  }
+
+  return entries
+}
+
+function EnvironmentTable({ entries, addons }: { entries: EnvEntry[]; addons: Deployment['addon_statuses'] }) {
+  if (entries.length === 0) {
+    return <div style={emptyDetailStyle}>No environment variables configured.</div>
+  }
+
+  return (
+    <div style={envTableStyle}>
+      {entries.map((entry) => {
+        const addon = addons.find((candidate) => candidate.connectionEnv === entry.key)
+        return (
+          <div key={`${entry.kind}-${entry.key}`} style={envRowStyle}>
+            <div style={envKeyStyle}>
+              {entry.key}
+              {entry.kind === 'injected' && <span style={injectedStyle}>injected</span>}
+              {entry.kind === 'secret' && <span style={secretStyle}>secret</span>}
+              {addon && <span style={addon.status === 'running' ? runningStyle : stoppedStyle}>{addon.status}{addon.persistent ? ' / disk' : ''}</span>}
+            </div>
+            <div style={envValueStyle}>
+              {entry.kind === 'secret' ? <SecretValue /> : <EnvValue value={entry.value ?? ''} />}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
 
 function SecretValue() {
   return (
-    <span style={{ alignItems: 'center', display: 'inline-flex', gap: 6 }}>
-      <span style={{ color: 'var(--text-muted)' as string, letterSpacing: 2 }}>••••••••••••</span>
-      <EyeOff size={11} color="var(--text-muted)" />
+    <span style={secretValueStyle}>
+      <span>••••••••••••</span>
+      <EyeOff size={13} />
     </span>
   )
 }
@@ -277,260 +218,286 @@ function SecretValue() {
 function EnvValue({ value }: { value: string }) {
   const [revealed, setRevealed] = useState(false)
   return (
-    <span
-      style={{ alignItems: 'center', cursor: 'pointer', display: 'inline-flex', gap: 6 }}
-      onClick={() => setRevealed((v) => !v)}
-    >
-      {revealed
-        ? <span style={{ color: 'var(--success)' as string, fontFamily: 'var(--font-mono)', userSelect: 'text' as const }}>{value}</span>
-        : <span style={{ color: 'var(--text-muted)' as string, letterSpacing: 2 }}>{'●'.repeat(Math.min(value.length, 12))}</span>
-      }
-      {revealed
-        ? <EyeOff size={11} color="var(--text-muted)" />
-        : <Eye size={11} color="var(--text-muted)" />
-      }
-    </span>
+    <button type="button" onClick={() => setRevealed((current) => !current)} style={valueButtonStyle}>
+      <span>{revealed ? value : '•'.repeat(Math.min(value.length || 8, 12))}</span>
+      {revealed ? <EyeOff size={13} /> : <Eye size={13} />}
+    </button>
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const cardStyle: CSSProperties = {
-  background: 'var(--bg-surface)' as string,
-  border: '0.5px solid',
-  borderRadius: 10,
-  overflow: 'hidden',
-  transition: 'border-color 0.15s ease, transform 0.15s ease',
+const rowStyle: CSSProperties = {
+  background: 'var(--panel)',
+  borderBottom: '1px solid var(--line)',
 }
 
-const headerStyle: CSSProperties = {
+const summaryStyle: CSSProperties = {
   alignItems: 'center',
   cursor: 'pointer',
   display: 'flex',
-  gap: 10,
-  padding: '13px 16px',
-  userSelect: 'none',
+  gap: 18,
+  justifyContent: 'space-between',
+  minHeight: 76,
+  padding: '16px 18px',
 }
 
-const dotStyle: CSSProperties = {
-  borderRadius: '50%',
-  display: 'inline-block',
+const serviceStyle: CSSProperties = {
+  alignItems: 'center',
+  display: 'flex',
+  gap: 13,
+  minWidth: 0,
+}
+
+const statusDotStyle: CSSProperties = {
+  display: 'block',
   flexShrink: 0,
-  height: 7,
-  width: 7,
+  height: 8,
+  width: 8,
 }
 
-const nameStyle: CSSProperties = {
-  fontSize: 14,
-  fontWeight: 500,
-  transition: 'color 0.15s ease',
+const titleLineStyle: CSSProperties = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8,
+}
+
+const serviceNameStyle: CSSProperties = {
+  color: 'var(--ink)',
+  fontSize: 16,
+  fontWeight: 600,
+}
+
+const branchStyle: CSSProperties = {
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  fontWeight: 700,
+  padding: '2px 6px',
+  textTransform: 'uppercase',
 }
 
 const metaStyle: CSSProperties = {
   alignItems: 'center',
-  color: 'var(--text-secondary)' as string,
+  color: 'var(--ink-muted)',
   display: 'flex',
-  fontSize: 12,
-  fontFamily: 'var(--font-mono)' as string,
-  gap: 5,
-  marginTop: 3,
+  flexWrap: 'wrap',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  gap: 7,
+  marginTop: 5,
 }
 
-const branchBadgeStyle: CSSProperties = {
-  alignItems: 'center',
-  background: 'rgba(96,165,250,0.1)',
-  border: '0.5px solid rgba(96,165,250,0.2)',
-  borderRadius: 4,
-  color: '#60a5fa',
-  display: 'inline-flex',
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 10,
-  fontWeight: 500,
-  gap: 5,
-  padding: '2px 7px',
+const errorMetaStyle: CSSProperties = {
+  color: 'var(--danger)',
 }
 
-const pgAddonBadgeStyle: CSSProperties = {
+const postgresBadgeStyle: CSSProperties = {
   alignItems: 'center',
-  background: 'rgba(62,207,142,0.1)',
-  border: '0.5px solid rgba(62,207,142,0.2)',
-  borderRadius: 4,
+  background: 'rgba(22,138,91,0.10)',
+  border: '1px solid rgba(22,138,91,0.22)',
   color: 'var(--success)',
   display: 'inline-flex',
-  fontFamily: 'var(--font-mono)' as string,
+  fontFamily: 'var(--font-mono)',
   fontSize: 10,
-  fontWeight: 500,
+  fontWeight: 800,
   gap: 5,
-  padding: '2px 7px',
+  padding: '2px 6px',
 }
 
-const redisAddonBadgeStyle: CSSProperties = {
-  alignItems: 'center',
-  background: 'rgba(245,166,35,0.1)',
-  border: '0.5px solid rgba(245,166,35,0.2)',
-  borderRadius: 4,
+const redisBadgeStyle: CSSProperties = {
+  ...postgresBadgeStyle,
+  background: 'rgba(255,178,79,0.18)',
+  borderColor: 'rgba(184,106,0,0.24)',
   color: 'var(--warning)',
-  display: 'inline-flex',
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 10,
-  fontWeight: 500,
-  gap: 5,
-  padding: '2px 7px',
 }
 
-const addonStatusDotStyle: CSSProperties = {
-  borderRadius: '50%',
-  display: 'inline-block',
+const smallDotStyle: CSSProperties = {
   height: 5,
   width: 5,
 }
 
-const rebuildBadgeStyle: CSSProperties = {
+const actionsStyle: CSSProperties = {
   alignItems: 'center',
-  background: 'rgba(167,139,250,0.1)',
-  border: '0.5px solid rgba(167,139,250,0.2)',
-  borderRadius: 4,
-  color: '#a78bfa',
-  display: 'inline-flex',
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 10,
-  fontWeight: 500,
-  gap: 5,
-  padding: '2px 7px',
+  display: 'flex',
+  flexShrink: 0,
+  gap: 8,
 }
 
 const statusBadgeStyle: CSSProperties = {
-  borderRadius: 4,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 10,
-  fontWeight: 500,
-  letterSpacing: '0.06em',
-  padding: '3px 8px',
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 800,
+  padding: '5px 8px',
+  textTransform: 'uppercase',
 }
 
 const openLinkStyle: CSSProperties = {
   alignItems: 'center',
-  background: 'rgba(62,207,142,0.08)',
-  border: '0.5px solid rgba(62,207,142,0.2)',
-  borderRadius: 6,
-  color: 'var(--success)' as string,
+  background: 'var(--ink)',
+  border: '1px solid var(--ink)',
+  color: 'var(--paper)',
   display: 'inline-flex',
-  fontFamily: 'var(--font-mono)' as string,
+  fontFamily: 'var(--font-mono)',
   fontSize: 11,
-  gap: 5,
-  padding: '4px 10px',
+  fontWeight: 800,
+  gap: 6,
+  height: 30,
+  padding: '0 10px',
   textDecoration: 'none',
+  textTransform: 'uppercase',
 }
 
-const iconBtnStyle: CSSProperties = {
+const iconButtonStyle: CSSProperties = {
   alignItems: 'center',
-  background: 'none',
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 6,
-  color: 'var(--text-muted)' as string,
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  color: 'var(--ink-muted)',
   cursor: 'pointer',
   display: 'flex',
-  padding: '5px 8px',
-  transition: 'color 0.1s, border-color 0.1s',
+  height: 30,
+  justifyContent: 'center',
+  width: 32,
 }
 
-const tabBarStyle: CSSProperties = {
-  borderBottom: '0.5px solid var(--border-subtle)' as string,
-  borderTop: '0.5px solid var(--border-subtle)' as string,
+const dangerButtonStyle: CSSProperties = {
+  ...iconButtonStyle,
+  color: 'var(--danger)',
+}
+
+const detailsStyle: CSSProperties = {
+  borderTop: '1px solid var(--line)',
+}
+
+const tabsStyle: CSSProperties = {
+  background: 'var(--paper)',
+  borderBottom: '1px solid var(--line)',
   display: 'flex',
-  padding: '0 12px',
+  padding: '0 14px',
 }
 
 const tabStyle: CSSProperties = {
   alignItems: 'center',
-  background: 'none',
-  border: 'none',
+  background: 'transparent',
+  border: 0,
   borderBottom: '2px solid transparent',
-  color: 'var(--text-muted)' as string,
+  color: 'var(--ink-muted)',
   cursor: 'pointer',
-  display: 'flex',
-  fontFamily: 'var(--font-body)' as string,
-  fontSize: 12,
-  fontWeight: 500,
-  gap: 6,
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 800,
+  gap: 7,
   marginBottom: -1,
-  padding: '9px 10px',
-  transition: 'color 0.1s',
+  padding: '12px 10px',
+  textTransform: 'uppercase',
 }
 
-const tabActiveStyle: CSSProperties = {
-  borderBottomColor: 'var(--accent)' as string,
-  color: 'var(--text-primary)' as string,
+const activeTabStyle: CSSProperties = {
+  ...tabStyle,
+  borderBottomColor: 'var(--blue)',
+  color: 'var(--ink)',
 }
 
-const tabBadgeStyle: CSSProperties = {
-  background: 'var(--bg-raised)' as string,
-  borderRadius: 9,
-  color: 'var(--text-muted)' as string,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 10,
+const tabCountStyle: CSSProperties = {
+  background: 'var(--line)',
+  color: 'var(--ink-soft)',
   padding: '1px 6px',
 }
 
-const envPanelStyle: CSSProperties = {
-  background: 'var(--bg-base)' as string,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 12,
-  maxHeight: 260,
-  overflowY: 'auto',
-  padding: '4px 0',
+const envTableStyle: CSSProperties = {
+  display: 'grid',
+}
+
+const envRowStyle: CSSProperties = {
+  alignItems: 'center',
+  borderBottom: '1px solid var(--line)',
+  display: 'grid',
+  gap: 18,
+  gridTemplateColumns: 'minmax(180px, 0.8fr) minmax(0, 1.2fr)',
+  minHeight: 48,
+  padding: '0 18px',
 }
 
 const envKeyStyle: CSSProperties = {
-  color: 'var(--text-muted)' as string,
-  padding: '8px 16px',
-  width: '38%',
+  alignItems: 'center',
+  color: 'var(--ink-soft)',
+  display: 'flex',
+  flexWrap: 'wrap',
+  fontFamily: 'var(--font-code)',
+  fontSize: 12,
+  gap: 6,
 }
 
-const injectedBadgeStyle: CSSProperties = {
-  background: 'rgba(62,207,142,0.1)',
-  border: '0.5px solid rgba(62,207,142,0.2)',
-  borderRadius: 3,
-  color: 'var(--success)' as string,
-  fontFamily: 'var(--font-mono)' as string,
+const envValueStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-code)',
+  fontSize: 12,
+  minWidth: 0,
+}
+
+const labelPillBase: CSSProperties = {
+  fontFamily: 'var(--font-mono)',
   fontSize: 9,
-  fontWeight: 500,
-  padding: '1px 4px',
+  fontWeight: 800,
+  padding: '2px 5px',
+  textTransform: 'uppercase',
 }
 
-const addonRunningBadgeStyle: CSSProperties = {
-  background: 'rgba(62,207,142,0.1)',
-  border: '0.5px solid rgba(62,207,142,0.2)',
-  borderRadius: 3,
-  color: 'var(--success)' as string,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 9,
-  fontWeight: 500,
-  padding: '1px 4px',
+const injectedStyle: CSSProperties = {
+  ...labelPillBase,
+  background: 'var(--blue-soft)',
+  color: 'var(--blue)',
 }
 
-const addonStoppedBadgeStyle: CSSProperties = {
-  background: 'rgba(82,80,77,0.1)',
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 3,
-  color: 'var(--text-muted)' as string,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 9,
-  fontWeight: 500,
-  padding: '1px 4px',
+const secretStyle: CSSProperties = {
+  ...labelPillBase,
+  background: 'var(--ink)',
+  color: 'var(--paper)',
 }
 
-const secretBadgeStyle: CSSProperties = {
-  background: 'rgba(232,255,71,0.08)',
-  border: '0.5px solid rgba(232,255,71,0.18)',
-  borderRadius: 3,
-  color: 'var(--accent)' as string,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 9,
-  fontWeight: 500,
-  padding: '1px 4px',
+const runningStyle: CSSProperties = {
+  ...labelPillBase,
+  background: 'rgba(22,138,91,0.10)',
+  color: 'var(--success)',
 }
 
-const envValStyle: CSSProperties = {
-  padding: '8px 16px 8px 0',
+const stoppedStyle: CSSProperties = {
+  ...labelPillBase,
+  background: 'var(--paper)',
+  color: 'var(--ink-muted)',
+}
+
+const secretValueStyle: CSSProperties = {
+  alignItems: 'center',
+  color: 'var(--ink-muted)',
+  display: 'inline-flex',
+  gap: 7,
+  letterSpacing: 2,
+}
+
+const valueButtonStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'transparent',
+  border: 0,
+  color: 'var(--ink-muted)',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-code)',
+  fontSize: 12,
+  gap: 7,
+  minWidth: 0,
+  padding: 0,
+  textAlign: 'left',
+}
+
+const emptyDetailStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  padding: 18,
+  textTransform: 'uppercase',
 }
