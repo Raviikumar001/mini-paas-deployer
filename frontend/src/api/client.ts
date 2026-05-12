@@ -59,6 +59,12 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  repositories: {
+    branches: (gitUrl: string): Promise<{ branches: string[] }> =>
+      fetch(`${BASE}/repositories/branches?gitUrl=${encodeURIComponent(gitUrl)}`)
+        .then(handle<{ branches: string[] }>),
+  },
+
   deployments: {
     list: (): Promise<Deployment[]> =>
       fetch(`${BASE}/deployments`).then(handle<Deployment[]>),

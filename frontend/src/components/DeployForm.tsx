@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type FormEvent } from 'react'
+import { useDeferredValue, useEffect, useState, type CSSProperties, type FormEvent } from 'react'
 import {
   Check,
   Database,
@@ -14,6 +14,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
+import { api } from '../api/client'
 import { useCreateDeployment } from '../hooks/useDeployments'
 
 interface EnvPair { key: string; value: string; secret: boolean }
@@ -57,7 +58,11 @@ export function DeployForm() {
   const compact = useCompactLayout()
   const [open, setOpen] = useState(false)
   const [url, setUrl] = useState('')
+  const deferredUrl = useDeferredValue(url.trim())
   const [branch, setBranch] = useState('main')
+  const [branches, setBranches] = useState<string[]>([])
+  const [branchLookup, setBranchLookup] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+  const [branchLookupError, setBranchLookupError] = useState('')
   const [pairs, setPairs] = useState<EnvPair[]>([])
   const [pasteMode, setPasteMode] = useState(false)
   const [pasteText, setPasteText] = useState('')
@@ -69,6 +74,9 @@ export function DeployForm() {
   const reset = () => {
     setUrl('')
     setBranch('main')
+    setBranches([])
+    setBranchLookup('idle')
+    setBranchLookupError('')
     setPairs([])
     setPasteText('')
     setPasteMode(false)
@@ -108,6 +116,7 @@ export function DeployForm() {
   const envPairs = pasteMode ? parseEnvFile(pasteText) : pairs
   const envCount = envPairs.filter((pair) => pair.key.trim()).length
   const secretCount = envPairs.filter((pair) => pair.key.trim() && pair.secret).length
+  const branchOptions = branch && !branches.includes(branch) ? [branch, ...branches] : branches
 
   const addPair = () => setPairs((prev) => [...prev, { key: '', value: '', secret: false }])
   const removePair = (i: number) => setPairs((prev) => prev.filter((_, idx) => idx !== i))
@@ -115,6 +124,44 @@ export function DeployForm() {
     setPairs((prev) => prev.map((pair, idx) => idx === i ? { ...pair, [field]: value } : pair))
   const toggleSecret = (i: number) =>
     setPairs((prev) => prev.map((pair, idx) => idx === i ? { ...pair, secret: !pair.secret } : pair))
+
+  useEffect(() => {
+    if (!deferredUrl || !/^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\//i.test(deferredUrl)) {
+      setBranches([])
+      setBranchLookup('idle')
+      setBranchLookupError('')
+      return
+    }
+
+    let cancelled = false
+    setBranches([])
+    setBranchLookup('loading')
+    setBranchLookupError('')
+
+    const timer = window.setTimeout(() => {
+      api.repositories.branches(deferredUrl)
+        .then(({ branches: nextBranches }) => {
+          if (cancelled) return
+          setBranches(nextBranches)
+          setBranchLookup('loaded')
+          setBranch((current) => {
+            if (current.trim() && current !== 'main') return current
+            return nextBranches.includes('main') ? 'main' : nextBranches[0] ?? current
+          })
+        })
+        .catch((err: Error) => {
+          if (cancelled) return
+          setBranches([])
+          setBranchLookup('error')
+          setBranchLookupError(err.message || 'Could not load branches')
+        })
+    }, 450)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [deferredUrl])
 
   return (
     <>
@@ -157,14 +204,41 @@ export function DeployForm() {
                   Branch
                   <div style={branchInputWrapStyle}>
                     <GitBranch size={15} color="var(--ink-muted)" />
-                    <input
-                      type="text"
-                      value={branch}
-                      onChange={(e) => setBranch(e.target.value)}
-                      placeholder="main"
-                      style={branchInputStyle}
-                    />
+                    {branches.length > 0 ? (
+                      <select
+                        value={branch}
+                        onChange={(e) => setBranch(e.target.value)}
+                        style={branchSelectStyle}
+                        aria-label="Select repository branch"
+                      >
+                        {branchOptions.map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={branch}
+                        onChange={(e) => setBranch(e.target.value)}
+                        placeholder="main"
+                        style={branchInputStyle}
+                      />
+                    )}
                   </div>
+                  {branchLookup === 'loading' && (
+                    <span style={branchHintStyle}>Inspecting repository branches...</span>
+                  )}
+                  {branchLookup === 'loaded' && branches.length > 0 && (
+                    <span style={branchHintStyle}>{branches.length} branches found. Pick the deploy target.</span>
+                  )}
+                  {branchLookup === 'loaded' && branches.length === 0 && (
+                    <span style={branchHintStyle}>No remote branches found. You can type one manually.</span>
+                  )}
+                  {branchLookup === 'error' && (
+                    <span style={branchErrorStyle}>
+                      Branches unavailable. Type one manually. {branchLookupError}
+                    </span>
+                  )}
                 </label>
               </section>
 
@@ -496,6 +570,28 @@ const branchInputStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 14,
   outline: 'none',
+}
+
+const branchSelectStyle: CSSProperties = {
+  ...branchInputStyle,
+  appearance: 'none',
+  cursor: 'pointer',
+  width: '100%',
+}
+
+const branchHintStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-body)',
+  fontSize: 12,
+  fontWeight: 500,
+  letterSpacing: 0,
+  lineHeight: 1.35,
+  textTransform: 'none',
+}
+
+const branchErrorStyle: CSSProperties = {
+  ...branchHintStyle,
+  color: 'var(--danger)',
 }
 
 const resourceStyle: CSSProperties = {

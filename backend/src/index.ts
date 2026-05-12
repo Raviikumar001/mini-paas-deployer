@@ -5,6 +5,7 @@ import { logger } from 'hono/logger'
 import { initDb } from './db/schema.js'
 import { deploymentRoutes } from './routes/deployments.js'
 import { logsRoute } from './routes/logs.js'
+import { repositoryRoutes } from './routes/repositories.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { reconcile } from './services/reconcile.js'
 import { registerStaticRoutes } from './services/caddy.js'
@@ -19,6 +20,7 @@ app.use('/api/*', cors())
 const api = new Hono()
 api.route('/deployments', deploymentRoutes)
 api.route('/deployments', logsRoute)
+api.route('/repositories', repositoryRoutes)
 api.route('/webhook', webhookRoutes)
 api.get('/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }))
 
