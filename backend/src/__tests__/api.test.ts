@@ -39,6 +39,38 @@ describe('POST /api/deployments', () => {
     expect(res.status).toBe(400)
   })
 
+  it('rejects non-HTTPS Git URLs with 400', async () => {
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gitUrl: 'http://github.com/user/repo' }),
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'gitUrl must use https' })
+  })
+
+  it('rejects unsupported Git hosts with 400', async () => {
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gitUrl: 'https://example.com/user/repo' }),
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'gitUrl host is not supported' })
+  })
+
+  it('rejects oversized deployment payloads with 413', async () => {
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gitUrl: 'https://github.com/user/repo',
+        envVars: { BIG_VALUE: 'x'.repeat(70 * 1024) },
+      }),
+    })
+    expect(res.status).toBe(413)
+  })
+
   it('accepts a valid https URL and returns 202 with id + pending status', async () => {
     const res = await app.request('/', {
       method: 'POST',

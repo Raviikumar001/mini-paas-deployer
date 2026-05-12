@@ -129,6 +129,8 @@ curl -X POST http://localhost/api/webhook/github \
   }'
 ```
 
+For production-like webhook testing, set `GITHUB_WEBHOOK_SECRET` to the same value configured in GitHub. When this variable is present, the backend requires a valid `X-Hub-Signature-256` HMAC signature. When it is absent, unsigned webhooks are accepted for local development.
+
 ---
 
 ## Why these choices
@@ -171,6 +173,7 @@ Without this, Caddy is configured to route to a container that hasn't finished b
 | `DOCKER_NETWORK` | `nobuild_net` | Network deployed containers join |
 | `BUILDKIT_HOST` | `docker-container://buildkit` | BuildKit daemon address |
 | `PORT` | `3001` | Backend port |
+| `GITHUB_WEBHOOK_SECRET` | unset | Optional GitHub webhook secret. When set, `POST /api/webhook/github` requires a valid `X-Hub-Signature-256` signature |
 
 All have sensible defaults — no `.env` file needed to run.
 

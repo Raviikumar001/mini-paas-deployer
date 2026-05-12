@@ -12,31 +12,45 @@ import { stopAndRemove } from '../services/runner.js'
 import { removeRoute } from '../services/caddy.js'
 import { stopPostgres, stopRedis } from '../services/addons.js'
 import { stopRuntimeLogs } from '../services/runtime-logs.js'
+import {
+  ensureRawBodySize,
+  ensureRequestSize,
+  parseJsonBody,
+  validatePublicGitUrl,
+} from '../lib/http-input.js'
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
+const DEPLOYMENT_BODY_LIMIT = 64 * 1024
 
 export const deploymentRoutes = new Hono()
 
 
 deploymentRoutes.post('/', async (c) => {
-  const body = await c.req.json<{
+  const lengthError = ensureRequestSize(c.req.header('content-length'), DEPLOYMENT_BODY_LIMIT)
+  if (lengthError) return c.json({ error: lengthError }, 413)
+
+  const rawBody = await c.req.text()
+  const bodySizeError = ensureRawBodySize(rawBody, DEPLOYMENT_BODY_LIMIT)
+  if (bodySizeError) return c.json({ error: bodySizeError }, 413)
+
+  const parsed = parseJsonBody<{
     gitUrl?: string
     envVars?: Record<string, string>
     branch?: string
     addons?: Array<{ type: 'postgres' | 'redis' }>
-  }>()
+  }>(rawBody)
+  if ('error' in parsed) return c.json({ error: parsed.error }, 400)
 
+  const body = parsed
   if (!body.gitUrl) return c.json({ error: 'gitUrl is required' }, 400)
 
-  let url: URL
-  try { url = new URL(body.gitUrl) } catch {
-    return c.json({ error: 'invalid gitUrl' }, 400)
-  }
+  const gitUrl = validatePublicGitUrl(body.gitUrl)
+  if (!gitUrl.ok) return c.json({ error: gitUrl.error }, 400)
 
   const envVars = body.envVars ?? {}
   const branch = body.branch?.trim() || 'main'
   const addons = body.addons ?? []
-  const name = url.pathname.split('/').filter(Boolean).pop() ?? 'deployment'
+  const name = gitUrl.url.pathname.split('/').filter(Boolean).pop()?.replace(/\.git$/, '') ?? 'deployment'
   const id = nanoid(10)
   const deployment = createDeployment(id, name, body.gitUrl, envVars, branch, addons)
 
@@ -87,7 +101,17 @@ deploymentRoutes.post('/:id/redeploy', async (c) => {
   }
 
 
-  const body = await c.req.json<{ envVars?: Record<string, string> }>().catch(() => ({ envVars: undefined }))
+  const lengthError = ensureRequestSize(c.req.header('content-length'), DEPLOYMENT_BODY_LIMIT)
+  if (lengthError) return c.json({ error: lengthError }, 413)
+
+  const rawBody = await c.req.text()
+  const bodySizeError = ensureRawBodySize(rawBody, DEPLOYMENT_BODY_LIMIT)
+  if (bodySizeError) return c.json({ error: bodySizeError }, 413)
+
+  const body = rawBody
+    ? parseJsonBody<{ envVars?: Record<string, string> }>(rawBody)
+    : { envVars: undefined }
+  if ('error' in body) return c.json({ error: body.error }, 400)
   const envVars = body.envVars ?? (JSON.parse(dep.env_vars || '{}') as Record<string, string>)
 
 

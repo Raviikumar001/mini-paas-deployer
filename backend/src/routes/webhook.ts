@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { customAlphabet } from 'nanoid'
+import { createHmac, timingSafeEqual } from 'crypto'
 import {
   createDeployment,
   findDeploymentBySourceAndBranch,
@@ -7,8 +8,15 @@ import {
   updateDeployment,
 } from '../db/schema.js'
 import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
+import {
+  ensureRawBodySize,
+  ensureRequestSize,
+  parseJsonBody,
+  validatePublicGitUrl,
+} from '../lib/http-input.js'
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
+const WEBHOOK_BODY_LIMIT = 1024 * 1024
 
 export const webhookRoutes = new Hono()
 
@@ -33,8 +41,40 @@ function parseBranch(ref?: string): string | undefined {
   return ref
 }
 
+function verifyGitHubSignature(rawBody: string, signature: string | null, secret: string): boolean {
+  if (!signature?.startsWith('sha256=')) return false
+
+  const expected = createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('hex')
+  const provided = signature.slice('sha256='.length)
+
+  const expectedBytes = Buffer.from(expected, 'hex')
+  const providedBytes = Buffer.from(provided, 'hex')
+  if (expectedBytes.length !== providedBytes.length) return false
+
+  return timingSafeEqual(expectedBytes, providedBytes)
+}
+
 webhookRoutes.post('/github', async (c) => {
-  const payload = await c.req.json<GitHubPushPayload | GitHubPRPayload>()
+  const lengthError = ensureRequestSize(c.req.header('content-length'), WEBHOOK_BODY_LIMIT)
+  if (lengthError) return c.json({ error: lengthError }, 413)
+
+  const rawBody = await c.req.text()
+  const bodySizeError = ensureRawBodySize(rawBody, WEBHOOK_BODY_LIMIT)
+  if (bodySizeError) return c.json({ error: bodySizeError }, 413)
+
+  const secret = process.env.GITHUB_WEBHOOK_SECRET
+
+  if (secret) {
+    const signature = c.req.header('x-hub-signature-256') ?? null
+    if (!verifyGitHubSignature(rawBody, signature, secret)) {
+      return c.json({ error: 'invalid webhook signature' }, 401)
+    }
+  }
+
+  const payload = parseJsonBody<GitHubPushPayload | GitHubPRPayload>(rawBody)
+  if ('error' in payload) return c.json({ error: payload.error }, 400)
 
   // Determine event type and extract fields
   const isPush = 'ref' in payload && payload.ref !== undefined
@@ -42,6 +82,8 @@ webhookRoutes.post('/github', async (c) => {
 
   const gitUrl = payload.repository?.clone_url
   if (!gitUrl) return c.json({ error: 'missing repository.clone_url' }, 400)
+  const validatedGitUrl = validatePublicGitUrl(gitUrl)
+  if (!validatedGitUrl.ok) return c.json({ error: validatedGitUrl.error }, 400)
 
   let branch: string | undefined
   let commitMsg = ''
