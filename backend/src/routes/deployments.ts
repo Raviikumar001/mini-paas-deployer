@@ -11,7 +11,7 @@ import {
 import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
 import { stopAndRemove } from '../services/runner.js'
 import { removeRoute } from '../services/caddy.js'
-import { stopPostgres, stopRedis } from '../services/addons.js'
+import { getAddonStatuses, stopPostgres, stopRedis, type AddonStatus } from '../services/addons.js'
 import { stopRuntimeLogs } from '../services/runtime-logs.js'
 import {
   ensureRawBodySize,
@@ -27,6 +27,7 @@ export const deploymentRoutes = new Hono()
 
 type PublicDeployment = Omit<Deployment, 'secret_env_vars'> & {
   secret_env_keys: string[]
+  addon_statuses: AddonStatus[]
 }
 
 function parseRecord(raw: string | null | undefined): Record<string, string> {
@@ -38,11 +39,21 @@ function parseRecord(raw: string | null | undefined): Record<string, string> {
   }
 }
 
-function toPublicDeployment(dep: Deployment): PublicDeployment {
+function parseAddons(raw: string | null | undefined): Array<{ type: 'postgres' | 'redis'; persistent?: boolean }> {
+  if (!raw) return []
+  try {
+    return JSON.parse(raw) as Array<{ type: 'postgres' | 'redis'; persistent?: boolean }>
+  } catch {
+    return []
+  }
+}
+
+async function toPublicDeployment(dep: Deployment): Promise<PublicDeployment> {
   const { secret_env_vars: secretEnvVars, ...publicDep } = dep
   return {
     ...publicDep,
     secret_env_keys: Object.keys(parseRecord(secretEnvVars)),
+    addon_statuses: await getAddonStatuses(dep.id, parseAddons(dep.addons)),
   }
 }
 
@@ -60,7 +71,7 @@ deploymentRoutes.post('/', async (c) => {
     envVars?: Record<string, string>
     secretEnvVars?: Record<string, string>
     branch?: string
-    addons?: Array<{ type: 'postgres' | 'redis' }>
+    addons?: Array<{ type: 'postgres' | 'redis'; persistent?: boolean }>
   }>(rawBody)
   if ('error' in parsed) return c.json({ error: parsed.error }, 400)
 
@@ -74,7 +85,10 @@ deploymentRoutes.post('/', async (c) => {
   const secretEnvVars = body.secretEnvVars ?? {}
   const mergedEnvVars = { ...envVars, ...secretEnvVars }
   const branch = body.branch?.trim() || 'main'
-  const addons = body.addons ?? []
+  const addons = (body.addons ?? []).map((addon) => ({
+    ...addon,
+    persistent: addon.type === 'postgres' ? true : addon.persistent === true,
+  }))
   const name = gitUrl.url.pathname.split('/').filter(Boolean).pop()?.replace(/\.git$/, '') ?? 'deployment'
   const id = nanoid(10)
   const deployment = createDeployment(id, name, body.gitUrl, envVars, secretEnvVars, branch, addons)
@@ -83,29 +97,30 @@ deploymentRoutes.post('/', async (c) => {
     updateDeployment(id, { status: 'failed', error: String(err) })
   })
 
-  return c.json(toPublicDeployment(deployment), 202)
+  return c.json(await toPublicDeployment(deployment), 202)
 })
 
 
-deploymentRoutes.get('/', (c) => c.json(listDeployments().map(toPublicDeployment)))
+deploymentRoutes.get('/', async (c) => c.json(await Promise.all(listDeployments().map(toPublicDeployment))))
 
 
-deploymentRoutes.get('/:id', (c) => {
+deploymentRoutes.get('/:id', async (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
-  return c.json(toPublicDeployment(dep))
+  return c.json(await toPublicDeployment(dep))
 })
 
 
 deploymentRoutes.delete('/:id', async (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
+  const deleteData = c.req.query('deleteData') === 'true'
 
   await Promise.allSettled([
     dep.container_name ? stopAndRemove(dep.container_name) : Promise.resolve(),
     removeRoute(dep.id),
-    stopPostgres(dep.id),
-    stopRedis(dep.id),
+    stopPostgres(dep.id, deleteData),
+    stopRedis(dep.id, deleteData),
     stopRuntimeLogs(dep.id),
   ])
 
@@ -150,10 +165,10 @@ deploymentRoutes.post('/:id/redeploy', async (c) => {
   })
 
   const oldContainerName = dep.container_name ?? ''
-  const addons: Array<{ type: 'postgres' | 'redis' }> = dep.addons ? JSON.parse(dep.addons) : []
+  const addons = parseAddons(dep.addons)
   runRedeployPipeline(dep.id, dep.source_url, dep.name, oldContainerName, mergedEnvVars, dep.branch ?? undefined, addons).catch((err) => {
     updateDeployment(dep.id, { status: 'failed', error: String(err) })
   })
 
-  return c.json(toPublicDeployment(getDeployment(dep.id)!))
+  return c.json(await toPublicDeployment(getDeployment(dep.id)!))
 })

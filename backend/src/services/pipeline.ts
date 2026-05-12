@@ -54,7 +54,7 @@ export async function runPipeline(
 
     const hasRedis = addons.some((a) => a.type === 'redis')
     if (hasRedis) {
-      await runRedis(deploymentId)
+      await runRedis(deploymentId, addons.find((a) => a.type === 'redis')?.persistent === true)
       await waitForRedis(deploymentId)
       mergedEnv.REDIS_URL = buildRedisUrl(deploymentId)
     }
@@ -147,7 +147,7 @@ export async function runRedeployPipeline(
 
     const hasRedis = addons.some((a) => a.type === 'redis')
     if (hasRedis) {
-      await runRedis(deploymentId)
+      await runRedis(deploymentId, addons.find((a) => a.type === 'redis')?.persistent === true)
       await waitForRedis(deploymentId)
       mergedEnv.REDIS_URL = buildRedisUrl(deploymentId)
     }

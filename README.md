@@ -131,6 +131,16 @@ curl -X POST http://localhost/api/webhook/github \
 
 For production-like webhook testing, set `GITHUB_WEBHOOK_SECRET` to the same value configured in GitHub. When this variable is present, the backend requires a valid `X-Hub-Signature-256` HMAC signature. When it is absent, unsigned webhooks are accepted for local development.
 
+### Add-on data lifecycle
+
+PostgreSQL sidecars use named Docker volumes by default, so database data survives app redeploys and sidecar restarts. Redis sidecars are cache-only by default, but can be started with append-only persistence when requested from the UI.
+
+Deleting a deployment removes the app container, Caddy route, and sidecar containers. Data volumes are preserved by default. To remove add-on data as well, call:
+
+```bash
+curl -X DELETE 'http://localhost/api/deployments/<id>?deleteData=true'
+```
+
 ---
 
 ## Why these choices
@@ -181,15 +191,14 @@ All have sensible defaults — no `.env` file needed to run.
 
 ## Known limitations / future work
 
-- Only shows build logs right now, not deploy/runtime logs
+- Runtime logs are tailed from running app containers, but add-on logs are not surfaced yet
 - Polling the deployment list every 3 seconds works but is a bit noisy — eventually want SSE-driven invalidation instead
 - CORS is wide open (`cors()` on `/api/*`) — should be origin-restricted for non-local use
 - Deployment URLs hardcode `.localhost` — need an env-driven base domain for real hosting
 - No build cancellation or queueing yet — overlapping heavy builds on a small machine can get rough
 - The frontend is served by Vite's dev server in the container; for real production use it should be a static build served by Caddy
 - No project upload (zip/tar) support yet — Git URL only
-- PostgreSQL & Redis sidecars start fresh on every redeploy — no persistent volume for data yet
-- Webhook endpoint has no signature verification — anyone can POST to it
+- PostgreSQL sidecars are persistent and Redis can be persistent, but there is not yet a UI control for deleting retained volumes
 
 ---
 

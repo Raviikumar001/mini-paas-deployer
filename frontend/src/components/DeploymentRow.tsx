@@ -50,6 +50,7 @@ export function DeploymentRow({ deployment: dep }: Props) {
   const canRedeploy = dep.status === 'running' || dep.status === 'failed' || dep.status === 'stopped'
   const canOpen = (dep.status === 'running' || dep.status === 'redeploying') && dep.url
   const cfg = STATUS_CONFIG[dep.status]
+  const addonStatuses = dep.addon_statuses ?? []
 
   let envEntries: EnvEntry[] = []
   try {
@@ -62,16 +63,15 @@ export function DeploymentRow({ deployment: dep }: Props) {
 
   let addonEntries: EnvEntry[] = []
   try {
-    const addons = JSON.parse(dep.addons || '[]') as Array<{ type: string }>
     const id = dep.id.toLowerCase().replace(/[^a-z0-9]/g, '')
-    if (addons.some((a) => a.type === 'postgres')) {
+    if (addonStatuses.some((a) => a.type === 'postgres')) {
       addonEntries.push({
         key: 'DATABASE_URL',
         value: `postgres://brimble:brimble@dep-${id}-db:5432/brimble`,
         kind: 'injected',
       })
     }
-    if (addons.some((a) => a.type === 'redis')) {
+    if (addonStatuses.some((a) => a.type === 'redis')) {
       addonEntries.push({
         key: 'REDIS_URL',
         value: `redis://dep-${id}-redis:6379`,
@@ -120,22 +120,19 @@ export function DeploymentRow({ deployment: dep }: Props) {
               {dep.branch && dep.branch !== 'main' && (
                 <span style={branchBadgeStyle}>{dep.branch}</span>
               )}
-              {(() => {
-                try {
-                  const addons = JSON.parse(dep.addons || '[]') as Array<{ type: string }>
-                  return (
-                    <>
-                      {addons.some((a) => a.type === 'postgres') && (
-                        <span style={pgAddonBadgeStyle}>PG</span>
-                      )}
-                      {addons.some((a) => a.type === 'redis') && (
-                        <span style={redisAddonBadgeStyle}>RD</span>
-                      )}
-                    </>
-                  )
-                } catch { /* */ }
-                return null
-              })()}
+              {addonStatuses.map((addon) => (
+                <span
+                  key={addon.type}
+                  style={addon.type === 'postgres' ? pgAddonBadgeStyle : redisAddonBadgeStyle}
+                  title={`${addon.connectionEnv} ${addon.status}${addon.persistent ? ', persistent' : ''}`}
+                >
+                  {addon.type === 'postgres' ? 'PG' : 'RD'}
+                  <span style={{
+                    ...addonStatusDotStyle,
+                    background: addon.status === 'running' ? 'var(--success)' : 'var(--text-muted)',
+                  } as CSSProperties} />
+                </span>
+              ))}
               {dep.status === 'redeploying' && (
                 <span style={rebuildBadgeStyle}>
                   <span className="pulse-dot" style={{ ...dotStyle, background: '#a78bfa', height: 5, width: 5 }} />
@@ -232,9 +229,19 @@ export function DeploymentRow({ deployment: dep }: Props) {
                         <td style={envKeyStyle}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                             {entry.key}
-                            {entry.kind === 'injected' && (
-                              <span style={injectedBadgeStyle}>injected</span>
-                            )}
+                            {entry.kind === 'injected' && (() => {
+                              const addon = addonStatuses.find((a) => a.connectionEnv === entry.key)
+                              return (
+                                <>
+                                  <span style={injectedBadgeStyle}>injected</span>
+                                  {addon && (
+                                    <span style={addon.status === 'running' ? addonRunningBadgeStyle : addonStoppedBadgeStyle}>
+                                      {addon.status}{addon.persistent ? ' / disk' : ''}
+                                    </span>
+                                  )}
+                                </>
+                              )
+                            })()}
                             {entry.kind === 'secret' && (
                               <span style={secretBadgeStyle}>secret</span>
                             )}
@@ -371,6 +378,13 @@ const redisAddonBadgeStyle: CSSProperties = {
   padding: '2px 7px',
 }
 
+const addonStatusDotStyle: CSSProperties = {
+  borderRadius: '50%',
+  display: 'inline-block',
+  height: 5,
+  width: 5,
+}
+
 const rebuildBadgeStyle: CSSProperties = {
   alignItems: 'center',
   background: 'rgba(167,139,250,0.1)',
@@ -478,6 +492,28 @@ const injectedBadgeStyle: CSSProperties = {
   border: '0.5px solid rgba(62,207,142,0.2)',
   borderRadius: 3,
   color: 'var(--success)' as string,
+  fontFamily: 'var(--font-mono)' as string,
+  fontSize: 9,
+  fontWeight: 500,
+  padding: '1px 4px',
+}
+
+const addonRunningBadgeStyle: CSSProperties = {
+  background: 'rgba(62,207,142,0.1)',
+  border: '0.5px solid rgba(62,207,142,0.2)',
+  borderRadius: 3,
+  color: 'var(--success)' as string,
+  fontFamily: 'var(--font-mono)' as string,
+  fontSize: 9,
+  fontWeight: 500,
+  padding: '1px 4px',
+}
+
+const addonStoppedBadgeStyle: CSSProperties = {
+  background: 'rgba(82,80,77,0.1)',
+  border: '0.5px solid var(--border-subtle)' as string,
+  borderRadius: 3,
+  color: 'var(--text-muted)' as string,
   fontFamily: 'var(--font-mono)' as string,
   fontSize: 9,
   fontWeight: 500,

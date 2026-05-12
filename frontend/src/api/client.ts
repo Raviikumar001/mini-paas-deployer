@@ -1,6 +1,13 @@
 export type DeploymentStatus =
   | 'pending' | 'building' | 'deploying' | 'running' | 'redeploying' | 'failed' | 'stopped'
 
+export interface AddonStatus {
+  type: 'postgres' | 'redis'
+  persistent: boolean
+  status: 'running' | 'stopped'
+  connectionEnv: 'DATABASE_URL' | 'REDIS_URL'
+}
+
 export interface Deployment {
   id: string
   name: string
@@ -14,6 +21,7 @@ export interface Deployment {
   env_vars: string   // JSON-encoded Record<string,string>
   secret_env_keys: string[]
   addons: string     // JSON-encoded Array<{ type: string }>
+  addon_statuses: AddonStatus[]
   error: string | null
   created_at: string
   updated_at: string
@@ -60,7 +68,7 @@ export const api = {
       envVars?: Record<string, string>
       secretEnvVars?: Record<string, string>
       branch?: string
-      addons?: Array<{ type: 'postgres' | 'redis' }>
+      addons?: Array<{ type: 'postgres' | 'redis'; persistent?: boolean }>
     }): Promise<Deployment> =>
       fetch(`${BASE}/deployments`, {
         method: 'POST',

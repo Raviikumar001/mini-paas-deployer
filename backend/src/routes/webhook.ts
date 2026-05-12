@@ -111,7 +111,9 @@ webhookRoutes.post('/github', async (c) => {
 
     const envVars = JSON.parse(existing.env_vars || '{}') as Record<string, string>
     const secretEnvVars = JSON.parse(existing.secret_env_vars || '{}') as Record<string, string>
-    const addons = existing.addons ? JSON.parse(existing.addons) as Array<{ type: 'postgres' | 'redis' }> : []
+    const addons = existing.addons
+      ? JSON.parse(existing.addons) as Array<{ type: 'postgres' | 'redis'; persistent?: boolean }>
+      : []
 
     updateDeployment(existing.id, {
       status: 'redeploying',

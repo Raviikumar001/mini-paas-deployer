@@ -12,11 +12,24 @@ vi.mock('../services/caddy.js',    () => ({
   removeRoute: vi.fn().mockResolvedValue(undefined),
   addRoute: vi.fn().mockResolvedValue(undefined),
 }))
+vi.mock('../services/addons.js', () => ({
+  stopPostgres: vi.fn().mockResolvedValue(undefined),
+  stopRedis: vi.fn().mockResolvedValue(undefined),
+  getAddonStatuses: vi.fn().mockImplementation((_id: string, addons: Array<{ type: 'postgres' | 'redis'; persistent?: boolean }>) =>
+    Promise.resolve(addons.map((addon) => ({
+      type: addon.type,
+      persistent: addon.type === 'postgres' ? true : addon.persistent === true,
+      status: 'stopped',
+      connectionEnv: addon.type === 'postgres' ? 'DATABASE_URL' : 'REDIS_URL',
+    }))),
+  ),
+}))
 
 // DATABASE_PATH=':memory:' is set in vitest.config.ts before this module loads
 import { getDeployment, initDb } from '../db/schema.js'
 import { deploymentRoutes } from '../routes/deployments.js'
 import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
+import { stopPostgres, stopRedis } from '../services/addons.js'
 
 const app = new Hono().route('/', deploymentRoutes)
 
@@ -121,6 +134,35 @@ describe('POST /api/deployments', () => {
       'main',
       [],
     )
+  })
+
+  it('stores persistent add-on config and exposes add-on status', async () => {
+    const res = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gitUrl: 'https://github.com/user/addon-test',
+        addons: [
+          { type: 'postgres' },
+          { type: 'redis', persistent: true },
+        ],
+      }),
+    })
+
+    expect(res.status).toBe(202)
+    const body = await res.json() as {
+      id: string
+      addons: string
+      addon_statuses: Array<{ type: string; persistent: boolean; status: string; connectionEnv: string }>
+    }
+    expect(JSON.parse(body.addons)).toEqual([
+      { type: 'postgres', persistent: true },
+      { type: 'redis', persistent: true },
+    ])
+    expect(body.addon_statuses).toEqual([
+      { type: 'postgres', persistent: true, status: 'stopped', connectionEnv: 'DATABASE_URL' },
+      { type: 'redis', persistent: true, status: 'stopped', connectionEnv: 'REDIS_URL' },
+    ])
   })
 })
 
@@ -271,5 +313,22 @@ describe('DELETE /api/deployments/:id', () => {
     // Confirm it's gone
     const getRes = await app.request(`/${id}`)
     expect(getRes.status).toBe(404)
+  })
+
+  it('only removes add-on data when deleteData=true is requested', async () => {
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gitUrl: 'https://github.com/user/delete-data-test',
+        addons: [{ type: 'postgres' }, { type: 'redis', persistent: true }],
+      }),
+    })
+    const { id } = await createRes.json() as { id: string }
+
+    const delRes = await app.request(`/${id}?deleteData=true`, { method: 'DELETE' })
+    expect(delRes.status).toBe(204)
+    expect(stopPostgres).toHaveBeenCalledWith(id, true)
+    expect(stopRedis).toHaveBeenCalledWith(id, true)
   })
 })

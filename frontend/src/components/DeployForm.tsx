@@ -46,6 +46,7 @@ export function DeployForm() {
   const [showEnv, setShowEnv] = useState(false)
   const [attachPostgres, setAttachPostgres] = useState(false)
   const [attachRedis, setAttachRedis] = useState(false)
+  const [persistRedis, setPersistRedis] = useState(false)
   const { mutate, isPending, error } = useCreateDeployment()
 
   const submit = (e: FormEvent) => {
@@ -59,16 +60,16 @@ export function DeployForm() {
       envVars?: Record<string, string>
       secretEnvVars?: Record<string, string>
       branch?: string
-      addons?: Array<{ type: 'postgres' | 'redis' }>
+      addons?: Array<{ type: 'postgres' | 'redis'; persistent?: boolean }>
     } = { gitUrl: trimmed }
     if (Object.keys(envVars).length) params.envVars = envVars
     if (Object.keys(secretEnvVars).length) params.secretEnvVars = secretEnvVars
     if (branch.trim()) params.branch = branch.trim()
-    const addons: Array<{ type: 'postgres' | 'redis' }> = []
-    if (attachPostgres) addons.push({ type: 'postgres' })
-    if (attachRedis) addons.push({ type: 'redis' })
+    const addons: Array<{ type: 'postgres' | 'redis'; persistent?: boolean }> = []
+    if (attachPostgres) addons.push({ type: 'postgres', persistent: true })
+    if (attachRedis) addons.push({ type: 'redis', persistent: persistRedis })
     if (addons.length) params.addons = addons
-    mutate(params, { onSuccess: () => { setUrl(''); setBranch(''); setPairs([]); setPasteText(''); setAttachPostgres(false); setAttachRedis(false) } })
+    mutate(params, { onSuccess: () => { setUrl(''); setBranch(''); setPairs([]); setPasteText(''); setAttachPostgres(false); setAttachRedis(false); setPersistRedis(false) } })
   }
 
   const addPair = () => setPairs((p) => [...p, { key: '', value: '', secret: false }])
@@ -132,7 +133,10 @@ export function DeployForm() {
         <div className="addon-tip" style={tooltipWrapStyle}>
           <button
             type="button"
-            onClick={() => setAttachRedis((v) => !v)}
+            onClick={() => setAttachRedis((v) => {
+              if (v) setPersistRedis(false)
+              return !v
+            })}
             style={{
               ...envToggleStyle,
               background: attachRedis ? 'rgba(245,166,35,0.12)' : 'var(--bg-raised)',
@@ -148,6 +152,22 @@ export function DeployForm() {
             <span style={{ color: 'var(--warning)' }}>REDIS_URL</span> is injected automatically.
           </div>
         </div>
+
+        {attachRedis && (
+          <button
+            type="button"
+            onClick={() => setPersistRedis((v) => !v)}
+            title="Persist Redis data"
+            style={{
+              ...envToggleStyle,
+              background: persistRedis ? 'rgba(245,166,35,0.12)' : 'var(--bg-raised)',
+              borderColor: persistRedis ? 'rgba(245,166,35,0.3)' : 'var(--border-subtle)',
+              color: persistRedis ? 'var(--warning)' : 'var(--text-secondary)',
+            } as CSSProperties}
+          >
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500 }}>AOF</span>
+          </button>
+        )}
 
         {/* Env toggle */}
         <button

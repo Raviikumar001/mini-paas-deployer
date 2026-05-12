@@ -7,6 +7,7 @@ export type AddonType = 'postgres' | 'redis'
 
 export interface Addon {
   type: AddonType
+  persistent?: boolean
 }
 
 export interface Deployment {
