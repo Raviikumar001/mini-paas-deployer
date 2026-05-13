@@ -11,6 +11,7 @@ import {
 import type { Deployment, DeploymentStatus } from '../api/client'
 import { useDeleteDeployment, useRedeployment } from '../hooks/useDeployments'
 import { LogPanel } from './LogPanel'
+import { DeploymentTimeline } from './DeploymentTimeline'
 
 const ACTIVE = new Set<DeploymentStatus>(['pending', 'building', 'deploying', 'redeploying'])
 
@@ -52,18 +53,18 @@ function repoLabel(url: string | null): string {
 }
 
 interface Props { deployment: Deployment }
-type Tab = 'logs' | 'env'
+type Tab = 'overview' | 'logs' | 'env'
 
 export function DeploymentRow({ deployment: dep }: Props) {
   const [expanded, setExpanded] = useState(() => ACTIVE.has(dep.status))
-  const [tab, setTab] = useState<Tab>('logs')
+  const [tab, setTab] = useState<Tab>('overview')
   const { mutate: remove, isPending: removing } = useDeleteDeployment()
   const { mutate: redeploy, isPending: redeploying } = useRedeployment()
 
   useEffect(() => {
     if (ACTIVE.has(dep.status)) {
       setExpanded(true)
-      setTab('logs')
+      setTab('overview')
     }
   }, [dep.status])
 
@@ -126,6 +127,9 @@ export function DeploymentRow({ deployment: dep }: Props) {
       {expanded && (
         <div style={detailsStyle}>
           <div style={tabsStyle}>
+            <button type="button" onClick={() => setTab('overview')} style={tab === 'overview' ? activeTabStyle : tabStyle}>
+              Timeline
+            </button>
             <button type="button" onClick={() => setTab('logs')} style={tab === 'logs' ? activeTabStyle : tabStyle}>Logs</button>
             <button type="button" onClick={() => setTab('env')} style={tab === 'env' ? activeTabStyle : tabStyle}>
               Environment
@@ -133,7 +137,9 @@ export function DeploymentRow({ deployment: dep }: Props) {
             </button>
           </div>
 
-          {tab === 'logs' ? (
+          {tab === 'overview' ? (
+            <DeploymentTimeline deploymentId={dep.id} enabled={expanded} />
+          ) : tab === 'logs' ? (
             <LogPanel deploymentId={dep.id} />
           ) : (
             <EnvironmentTable entries={allEnvEntries} addons={addonStatuses} />

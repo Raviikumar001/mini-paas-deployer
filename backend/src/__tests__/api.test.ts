@@ -26,7 +26,7 @@ vi.mock('../services/addons.js', () => ({
 }))
 
 // DATABASE_PATH=':memory:' is set in vitest.config.ts before this module loads
-import { getDeployment, initDb } from '../db/schema.js'
+import { getDeployment, getDeploymentEvents, initDb } from '../db/schema.js'
 import { deploymentRoutes } from '../routes/deployments.js'
 import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
 import { stopPostgres, stopRedis } from '../services/addons.js'
@@ -250,6 +250,25 @@ describe('GET /api/deployments/:id', () => {
     }
     expect(body.secret_env_vars).toBeUndefined()
     expect(body.secret_env_keys).toEqual(['API_TOKEN'])
+  })
+
+  it('returns structured lifecycle events for a deployment', async () => {
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gitUrl: 'https://github.com/user/events-test' }),
+    })
+    const { id } = await createRes.json() as { id: string }
+
+    const res = await app.request(`/${id}/events`)
+    expect(res.status).toBe(200)
+
+    const body = await res.json() as Array<{ type: string; message: string }>
+    expect(body[0]).toMatchObject({
+      type: 'deployment_created',
+      message: 'Deployment queued',
+    })
+    expect(getDeploymentEvents(id).length).toBeGreaterThan(0)
   })
 })
 

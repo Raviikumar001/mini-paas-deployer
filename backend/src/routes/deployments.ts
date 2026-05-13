@@ -4,6 +4,7 @@ import {
   createDeployment,
   deleteDeployment,
   type Deployment,
+  getDeploymentEvents,
   getDeployment,
   listDeployments,
   updateDeployment,
@@ -19,6 +20,7 @@ import {
   parseJsonBody,
   validatePublicGitUrl,
 } from '../lib/http-input.js'
+import { recordDeploymentEvent } from '../services/deployment-events.js'
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
 const DEPLOYMENT_BODY_LIMIT = 64 * 1024
@@ -57,6 +59,12 @@ async function toPublicDeployment(dep: Deployment): Promise<PublicDeployment> {
   }
 }
 
+deploymentRoutes.get('/:id/events', (c) => {
+  const dep = getDeployment(c.req.param('id'))
+  if (!dep) return c.json({ error: 'not found' }, 404)
+  return c.json(getDeploymentEvents(dep.id))
+})
+
 
 deploymentRoutes.post('/', async (c) => {
   const lengthError = ensureRequestSize(c.req.header('content-length'), DEPLOYMENT_BODY_LIMIT)
@@ -92,6 +100,11 @@ deploymentRoutes.post('/', async (c) => {
   const name = gitUrl.url.pathname.split('/').filter(Boolean).pop()?.replace(/\.git$/, '') ?? 'deployment'
   const id = nanoid(10)
   const deployment = createDeployment(id, name, body.gitUrl, envVars, secretEnvVars, branch, addons)
+  recordDeploymentEvent(id, 'deployment_created', 'Deployment queued', {
+    repository: name,
+    branch,
+    addons: addons.length,
+  })
 
   runPipeline(id, body.gitUrl, name, mergedEnvVars, branch, addons).catch((err) => {
     updateDeployment(id, { status: 'failed', error: String(err) })
@@ -115,6 +128,9 @@ deploymentRoutes.delete('/:id', async (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
   const deleteData = c.req.query('deleteData') === 'true'
+  recordDeploymentEvent(dep.id, 'deployment_deleted', 'Deployment deletion requested', {
+    deleteData,
+  })
 
   await Promise.allSettled([
     dep.container_name ? stopAndRemove(dep.container_name) : Promise.resolve(),

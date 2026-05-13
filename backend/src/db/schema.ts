@@ -37,6 +37,33 @@ export interface LogLine {
   created_at: string
 }
 
+export type DeploymentEventType =
+  | 'deployment_created'
+  | 'addons_provisioning'
+  | 'addons_ready'
+  | 'clone_started'
+  | 'clone_completed'
+  | 'build_started'
+  | 'build_completed'
+  | 'container_started'
+  | 'healthcheck_passed'
+  | 'route_configured'
+  | 'runtime_live'
+  | 'redeploy_started'
+  | 'traffic_shifted'
+  | 'old_runtime_stopped'
+  | 'deployment_deleted'
+  | 'deployment_failed'
+
+export interface DeploymentEvent {
+  id: number
+  deployment_id: string
+  type: DeploymentEventType
+  message: string
+  metadata: string
+  created_at: string
+}
+
 let db: Database.Database
 
 export function getDb(): Database.Database {
@@ -77,8 +104,20 @@ export function initDb(): void {
       created_at     TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS deployment_events (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      deployment_id  TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+      type           TEXT NOT NULL,
+      message        TEXT NOT NULL,
+      metadata       TEXT NOT NULL DEFAULT '{}',
+      created_at     TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_logs_deployment
       ON log_lines(deployment_id, id);
+
+    CREATE INDEX IF NOT EXISTS idx_deployment_events_deployment
+      ON deployment_events(deployment_id, id);
   `)
 
   // Non-destructive migrations — adds columns if this is an existing DB
@@ -186,4 +225,30 @@ export function getLogs(deploymentId: string): LogLine[] {
   return getDb()
     .prepare('SELECT * FROM log_lines WHERE deployment_id = ? ORDER BY id')
     .all(deploymentId) as LogLine[]
+}
+
+export function insertDeploymentEvent(
+  deploymentId: string,
+  type: DeploymentEventType,
+  message: string,
+  metadata: Record<string, string | number | boolean | null> = {},
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO deployment_events (deployment_id, type, message, metadata, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      deploymentId,
+      type,
+      message,
+      JSON.stringify(metadata),
+      new Date().toISOString(),
+    )
+}
+
+export function getDeploymentEvents(deploymentId: string): DeploymentEvent[] {
+  return getDb()
+    .prepare('SELECT * FROM deployment_events WHERE deployment_id = ? ORDER BY id')
+    .all(deploymentId) as DeploymentEvent[]
 }

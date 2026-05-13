@@ -45,6 +45,31 @@ export interface DoneEvent { type: 'done' }
 
 export type PipelineEvent = LogEvent | StatusEvent | DoneEvent
 
+export interface DeploymentEvent {
+  id: number
+  deployment_id: string
+  type:
+    | 'deployment_created'
+    | 'addons_provisioning'
+    | 'addons_ready'
+    | 'clone_started'
+    | 'clone_completed'
+    | 'build_started'
+    | 'build_completed'
+    | 'container_started'
+    | 'healthcheck_passed'
+    | 'route_configured'
+    | 'runtime_live'
+    | 'redeploy_started'
+    | 'traffic_shifted'
+    | 'old_runtime_stopped'
+    | 'deployment_deleted'
+    | 'deployment_failed'
+  message: string
+  metadata: string
+  created_at: string
+}
+
 // HTTP helpers ─────────────────────────────────────────────────────────────────
 
 const BASE = '/api'
@@ -68,6 +93,9 @@ export const api = {
   deployments: {
     list: (): Promise<Deployment[]> =>
       fetch(`${BASE}/deployments`).then(handle<Deployment[]>),
+
+    events: (id: string): Promise<DeploymentEvent[]> =>
+      fetch(`${BASE}/deployments/${id}/events`).then(handle<DeploymentEvent[]>),
 
     create: (params: {
       gitUrl: string
