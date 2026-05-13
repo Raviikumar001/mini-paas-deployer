@@ -6,10 +6,14 @@ vi.mock('../services/pipeline.js', () => ({
   runPipeline: vi.fn().mockResolvedValue(undefined),
   runRedeployPipeline: vi.fn().mockResolvedValue(undefined),
 }))
+vi.mock('../services/deployment-lifecycle.js', () => ({
+  destroyDeployment: vi.fn().mockResolvedValue(undefined),
+}))
 
-import { initDb } from '../db/schema.js'
+import { findPreviewDeploymentByRepoAndPr, getDeployment, initDb } from '../db/schema.js'
 import { webhookRoutes } from '../routes/webhook.js'
-import { runPipeline } from '../services/pipeline.js'
+import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
+import { destroyDeployment } from '../services/deployment-lifecycle.js'
 
 const app = new Hono().route('/', webhookRoutes)
 const ORIGINAL_SECRET = process.env.GITHUB_WEBHOOK_SECRET
@@ -45,6 +49,29 @@ function pushPayload(repo = 'signed-test') {
 
 function sign(rawBody: string, secret: string): string {
   return `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`
+}
+
+function pullRequestPayload(repo = 'preview-test', action = 'opened') {
+  return {
+    action,
+    pull_request: {
+      number: 42,
+      html_url: `https://github.com/user/${repo}/pull/42`,
+      title: 'Ship preview polish',
+      merged: false,
+      head: {
+        ref: 'feature/preview-flow',
+        sha: 'def456',
+      },
+      base: {
+        ref: 'main',
+      },
+    },
+    repository: {
+      clone_url: `https://github.com/user/${repo}`,
+      name: repo,
+    },
+  }
 }
 
 describe('POST /api/webhook/github', () => {
@@ -148,5 +175,85 @@ describe('POST /api/webhook/github', () => {
 
     expect(res.status).toBe(413)
     expect(runPipeline).not.toHaveBeenCalled()
+  })
+
+  it('creates a preview deployment for pull request opened events', async () => {
+    const res = await app.request('/github', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GitHub-Event': 'pull_request',
+      },
+      body: JSON.stringify(pullRequestPayload('preview-create')),
+    })
+
+    expect(res.status).toBe(202)
+    expect(runPipeline).toHaveBeenCalledOnce()
+
+    const body = await res.json() as { deploymentId: string; action: string }
+    expect(body.action).toBe('create-preview')
+
+    const stored = getDeployment(body.deploymentId)
+    expect(stored?.is_preview).toBe(1)
+    expect(stored?.pr_number).toBe(42)
+    expect(stored?.source_sha).toBe('def456')
+    expect(stored?.source_message).toBe('Ship preview polish')
+    expect(stored?.name).toBe('pr-42-preview-create')
+  })
+
+  it('redeploys an existing preview deployment on pull request synchronize', async () => {
+    await app.request('/github', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GitHub-Event': 'pull_request',
+      },
+      body: JSON.stringify(pullRequestPayload('preview-sync', 'opened')),
+    })
+
+    vi.clearAllMocks()
+
+    const res = await app.request('/github', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GitHub-Event': 'pull_request',
+      },
+      body: JSON.stringify(pullRequestPayload('preview-sync', 'synchronize')),
+    })
+
+    expect(res.status).toBe(202)
+    expect(runRedeployPipeline).toHaveBeenCalledOnce()
+    expect(runPipeline).not.toHaveBeenCalled()
+
+    const preview = findPreviewDeploymentByRepoAndPr('https://github.com/user/preview-sync', 42)
+    expect(preview?.source_sha).toBe('def456')
+  })
+
+  it('deletes preview deployments when pull requests close', async () => {
+    await app.request('/github', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GitHub-Event': 'pull_request',
+      },
+      body: JSON.stringify(pullRequestPayload('preview-close', 'opened')),
+    })
+
+    vi.clearAllMocks()
+
+    const res = await app.request('/github', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GitHub-Event': 'pull_request',
+      },
+      body: JSON.stringify(pullRequestPayload('preview-close', 'closed')),
+    })
+
+    expect(res.status).toBe(202)
+    expect(destroyDeployment).toHaveBeenCalledOnce()
+    expect(runPipeline).not.toHaveBeenCalled()
+    expect(runRedeployPipeline).not.toHaveBeenCalled()
   })
 })

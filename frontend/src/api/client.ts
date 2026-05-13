@@ -13,6 +13,11 @@ export interface Deployment {
   name: string
   source_url: string | null
   branch: string | null
+  source_sha: string | null
+  source_message: string | null
+  pr_number: number | null
+  pr_url: string | null
+  is_preview: number
   status: DeploymentStatus
   image_tag: string | null
   container_name: string | null

@@ -15,6 +15,11 @@ export interface Deployment {
   name: string
   source_url: string | null
   branch: string | null
+  source_sha: string | null
+  source_message: string | null
+  pr_number: number | null
+  pr_url: string | null
+  is_preview: number
   status: DeploymentStatus
   image_tag: string | null
   container_id: string | null
@@ -84,6 +89,11 @@ export function initDb(): void {
       name           TEXT NOT NULL,
       source_url     TEXT,
       branch         TEXT DEFAULT 'main',
+      source_sha     TEXT,
+      source_message TEXT,
+      pr_number      INTEGER,
+      pr_url         TEXT,
+      is_preview     INTEGER NOT NULL DEFAULT 0,
       status         TEXT NOT NULL DEFAULT 'pending',
       image_tag      TEXT,
       container_id   TEXT,
@@ -136,6 +146,26 @@ export function initDb(): void {
   try {
     getDb().exec(`ALTER TABLE deployments ADD COLUMN addons TEXT DEFAULT '[]'`)
   } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN source_sha TEXT`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN source_message TEXT`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN pr_number INTEGER`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN pr_url TEXT`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN is_preview INTEGER NOT NULL DEFAULT 0`)
+  } catch { /* column already exists */ }
 }
 
 // ── Deployment queries ────────────────────────────────────────────────────────
@@ -148,18 +178,33 @@ export function createDeployment(
   secretEnvVars: Record<string, string> = {},
   branch = 'main',
   addons: Addon[] = [],
+  metadata: {
+    sourceSha?: string | null
+    sourceMessage?: string | null
+    prNumber?: number | null
+    prUrl?: string | null
+    isPreview?: boolean
+  } = {},
 ): Deployment {
   const now = new Date().toISOString()
   getDb()
     .prepare(
-      `INSERT INTO deployments (id, name, source_url, branch, status, env_vars, secret_env_vars, addons, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+      `INSERT INTO deployments (
+         id, name, source_url, branch, source_sha, source_message, pr_number, pr_url, is_preview,
+         status, env_vars, secret_env_vars, addons, created_at, updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
       name,
       sourceUrl,
       branch,
+      metadata.sourceSha ?? null,
+      metadata.sourceMessage ?? null,
+      metadata.prNumber ?? null,
+      metadata.prUrl ?? null,
+      metadata.isPreview ? 1 : 0,
       JSON.stringify(envVars),
       JSON.stringify(secretEnvVars),
       JSON.stringify(addons),
@@ -186,8 +231,17 @@ export function findDeploymentBySourceAndBranch(
   branch: string,
 ): Deployment | undefined {
   return getDb()
-    .prepare('SELECT * FROM deployments WHERE source_url = ? AND branch = ? ORDER BY created_at DESC LIMIT 1')
+    .prepare('SELECT * FROM deployments WHERE source_url = ? AND branch = ? AND is_preview = 0 ORDER BY created_at DESC LIMIT 1')
     .get(sourceUrl, branch) as Deployment | undefined
+}
+
+export function findPreviewDeploymentByRepoAndPr(
+  sourceUrl: string,
+  prNumber: number,
+): Deployment | undefined {
+  return getDb()
+    .prepare('SELECT * FROM deployments WHERE source_url = ? AND pr_number = ? AND is_preview = 1 ORDER BY created_at DESC LIMIT 1')
+    .get(sourceUrl, prNumber) as Deployment | undefined
 }
 
 export function updateDeployment(

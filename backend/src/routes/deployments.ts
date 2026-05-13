@@ -10,10 +10,7 @@ import {
   updateDeployment,
 } from '../db/schema.js'
 import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
-import { stopAndRemove } from '../services/runner.js'
-import { removeRoute } from '../services/caddy.js'
-import { getAddonStatuses, stopPostgres, stopRedis, type AddonStatus } from '../services/addons.js'
-import { stopRuntimeLogs } from '../services/runtime-logs.js'
+import { getAddonStatuses, type AddonStatus } from '../services/addons.js'
 import {
   ensureRawBodySize,
   ensureRequestSize,
@@ -21,6 +18,7 @@ import {
   validatePublicGitUrl,
 } from '../lib/http-input.js'
 import { recordDeploymentEvent } from '../services/deployment-events.js'
+import { destroyDeployment } from '../services/deployment-lifecycle.js'
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10)
 const DEPLOYMENT_BODY_LIMIT = 64 * 1024
@@ -131,16 +129,7 @@ deploymentRoutes.delete('/:id', async (c) => {
   recordDeploymentEvent(dep.id, 'deployment_deleted', 'Deployment deletion requested', {
     deleteData,
   })
-
-  await Promise.allSettled([
-    dep.container_name ? stopAndRemove(dep.container_name) : Promise.resolve(),
-    removeRoute(dep.id),
-    stopPostgres(dep.id, deleteData),
-    stopRedis(dep.id, deleteData),
-    stopRuntimeLogs(dep.id),
-  ])
-
-  deleteDeployment(dep.id)
+  await destroyDeployment(dep, deleteData)
   return c.body(null, 204)
 })
 

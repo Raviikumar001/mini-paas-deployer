@@ -82,7 +82,9 @@ export function DeploymentRow({ deployment: dep }: Props) {
           <div style={{ minWidth: 0 }}>
             <div style={titleLineStyle}>
               <strong style={serviceNameStyle}>{dep.name}</strong>
+              {dep.is_preview === 1 && <span style={previewStyle}>Preview</span>}
               {dep.branch && <span style={branchStyle}>{dep.branch}</span>}
+              {dep.pr_number && <span style={prStyle}>PR #{dep.pr_number}</span>}
               {addonStatuses.map((addon) => (
                 <span key={addon.type} style={addon.type === 'postgres' ? postgresBadgeStyle : redisBadgeStyle}>
                   {addon.type === 'postgres' ? 'PG' : 'RD'}
@@ -97,8 +99,25 @@ export function DeploymentRow({ deployment: dep }: Props) {
               <span>{repoLabel(dep.source_url)}</span>
               <span>/</span>
               <span>{timeAgo(dep.created_at)}</span>
+              {dep.source_sha && (
+                <>
+                  <span>/</span>
+                  <span style={shaStyle}>{dep.source_sha.slice(0, 7)}</span>
+                </>
+              )}
               {dep.error && <span style={errorMetaStyle}>{dep.error.slice(0, 64)}</span>}
             </div>
+            {(dep.source_message || dep.pr_url) && (
+              <div style={sourceLineStyle}>
+                {dep.source_message && <span style={sourceMessageStyle}>{dep.source_message}</span>}
+                {dep.pr_url && (
+                  <a href={dep.pr_url} target="_blank" rel="noopener noreferrer" style={sourceLinkStyle}>
+                    <ExternalLink size={12} />
+                    View PR
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -284,6 +303,20 @@ const branchStyle: CSSProperties = {
   textTransform: 'uppercase',
 }
 
+const previewStyle: CSSProperties = {
+  ...branchStyle,
+  background: 'var(--blue-soft)',
+  borderColor: 'rgba(102,124,255,0.2)',
+  color: 'var(--blue)',
+}
+
+const prStyle: CSSProperties = {
+  ...branchStyle,
+  background: 'rgba(255,178,79,0.16)',
+  borderColor: 'rgba(184,106,0,0.2)',
+  color: 'var(--warning)',
+}
+
 const metaStyle: CSSProperties = {
   alignItems: 'center',
   color: 'var(--ink-muted)',
@@ -297,6 +330,36 @@ const metaStyle: CSSProperties = {
 
 const errorMetaStyle: CSSProperties = {
   color: 'var(--danger)',
+}
+
+const shaStyle: CSSProperties = {
+  color: 'var(--ink-soft)',
+}
+
+const sourceLineStyle: CSSProperties = {
+  alignItems: 'center',
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 10,
+  marginTop: 6,
+}
+
+const sourceMessageStyle: CSSProperties = {
+  color: 'var(--ink-soft)',
+  fontSize: 13,
+  lineHeight: 1.4,
+}
+
+const sourceLinkStyle: CSSProperties = {
+  alignItems: 'center',
+  color: 'var(--blue)',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 700,
+  gap: 5,
+  textDecoration: 'none',
+  textTransform: 'uppercase',
 }
 
 const postgresBadgeStyle: CSSProperties = {
