@@ -5,6 +5,7 @@ import {
   deleteDeployment,
   type Deployment,
   getDeploymentEvents,
+  getDeploymentHealthChecks,
   getDeployment,
   listDeployments,
   updateDeployment,
@@ -61,6 +62,12 @@ deploymentRoutes.get('/:id/events', (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
   return c.json(getDeploymentEvents(dep.id))
+})
+
+deploymentRoutes.get('/:id/health', (c) => {
+  const dep = getDeployment(c.req.param('id'))
+  if (!dep) return c.json({ error: 'not found' }, 404)
+  return c.json(getDeploymentHealthChecks(dep.id))
 })
 
 

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import type { Deployment, DeploymentStatus } from '../api/client'
 import { useDeleteDeployment, useRedeployment } from '../hooks/useDeployments'
+import { DeploymentSystem } from './DeploymentSystem'
 import { LogPanel } from './LogPanel'
 import { DeploymentTimeline } from './DeploymentTimeline'
 
@@ -53,7 +54,7 @@ function repoLabel(url: string | null): string {
 }
 
 interface Props { deployment: Deployment }
-type Tab = 'overview' | 'logs' | 'env'
+type Tab = 'overview' | 'logs' | 'env' | 'system'
 
 export function DeploymentRow({ deployment: dep }: Props) {
   const [expanded, setExpanded] = useState(() => ACTIVE.has(dep.status))
@@ -154,12 +155,17 @@ export function DeploymentRow({ deployment: dep }: Props) {
               Environment
               {allEnvEntries.length > 0 && <span style={tabCountStyle}>{allEnvEntries.length}</span>}
             </button>
+            <button type="button" onClick={() => setTab('system')} style={tab === 'system' ? activeTabStyle : tabStyle}>
+              System
+            </button>
           </div>
 
           {tab === 'overview' ? (
             <DeploymentTimeline deploymentId={dep.id} enabled={expanded} />
           ) : tab === 'logs' ? (
             <LogPanel deploymentId={dep.id} />
+          ) : tab === 'system' ? (
+            <DeploymentSystem deployment={dep} enabled={expanded && tab === 'system'} />
           ) : (
             <EnvironmentTable entries={allEnvEntries} addons={addonStatuses} />
           )}

@@ -270,6 +270,19 @@ describe('GET /api/deployments/:id', () => {
     })
     expect(getDeploymentEvents(id).length).toBeGreaterThan(0)
   })
+
+  it('returns health samples for a deployment', async () => {
+    const createRes = await app.request('/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gitUrl: 'https://github.com/user/health-test' }),
+    })
+    const { id } = await createRes.json() as { id: string }
+
+    const res = await app.request(`/${id}/health`)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
+  })
 })
 
 describe('POST /api/deployments/:id/redeploy', () => {

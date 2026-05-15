@@ -18,6 +18,13 @@ export interface Deployment {
   pr_number: number | null
   pr_url: string | null
   is_preview: number
+  build_duration_ms: number | null
+  deploy_duration_ms: number | null
+  last_failure_at: string | null
+  last_failure_stage: string | null
+  detected_language: string | null
+  detected_framework: string | null
+  detected_start_command: string | null
   status: DeploymentStatus
   image_tag: string | null
   container_name: string | null
@@ -75,6 +82,14 @@ export interface DeploymentEvent {
   created_at: string
 }
 
+export interface DeploymentHealthCheck {
+  id: number
+  deployment_id: string
+  ok: number
+  latency_ms: number | null
+  created_at: string
+}
+
 // HTTP helpers ─────────────────────────────────────────────────────────────────
 
 const BASE = '/api'
@@ -101,6 +116,9 @@ export const api = {
 
     events: (id: string): Promise<DeploymentEvent[]> =>
       fetch(`${BASE}/deployments/${id}/events`).then(handle<DeploymentEvent[]>),
+
+    health: (id: string): Promise<DeploymentHealthCheck[]> =>
+      fetch(`${BASE}/deployments/${id}/health`).then(handle<DeploymentHealthCheck[]>),
 
     create: (params: {
       gitUrl: string

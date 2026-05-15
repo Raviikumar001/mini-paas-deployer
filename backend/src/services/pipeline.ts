@@ -3,6 +3,7 @@ import { rm } from 'fs/promises'
 import { updateDeployment, type Addon } from '../db/schema.js'
 import { emitLog, emitStatus, emitDone } from '../lib/emitter.js'
 import { recordDeploymentEvent } from './deployment-events.js'
+import { detectAppProfile } from './app-profile.js'
 import { cloneRepo, buildImage, detectPort } from './builder.js'
 import { runContainer, stopAndRemove, waitForContainer } from './runner.js'
 import { addRoute, updateRoute } from './caddy.js'
@@ -44,6 +45,9 @@ export async function runPipeline(
   let containerName = ''
   let reachedRunning = false
   let currentStage = 'initialize'
+  const pipelineStartedAt = Date.now()
+  let deployStartedAt = 0
+  let buildStartedAt = 0
 
   try {
     // ── 0. Start addons ───────────────────────────────────────────────────────
@@ -90,17 +94,27 @@ export async function runPipeline(
     const imageTag = `nobuild-${id}:latest`
 
     currentStage = 'build'
+    buildStartedAt = Date.now()
     recordDeploymentEvent(deploymentId, 'build_started', 'Building runtime image', { imageTag })
-    const [appPort] = await Promise.all([
+    const [appPort, profile] = await Promise.all([
       detectPort(srcPath).then((p) => p ?? 3000),
+      detectAppProfile(srcPath),
       buildImage(srcPath, imageTag, deploymentId, name, envVars),
     ])
 
-    updateDeployment(deploymentId, { app_port: appPort, image_tag: imageTag })
+    updateDeployment(deploymentId, {
+      app_port: appPort,
+      image_tag: imageTag,
+      build_duration_ms: Date.now() - buildStartedAt,
+      detected_language: profile.language,
+      detected_framework: profile.framework,
+      detected_start_command: profile.startCommand,
+    })
     recordDeploymentEvent(deploymentId, 'build_completed', 'Image built successfully', { imageTag, appPort })
 
     // ── 3. Run container ──────────────────────────────────────────────────────
     currentStage = 'container'
+    deployStartedAt = Date.now()
     emitStatus(deploymentId, 'deploying')
     updateDeployment(deploymentId, { status: 'deploying' })
 
@@ -129,10 +143,19 @@ export async function runPipeline(
 
     const baseDomain = process.env.BASE_DOMAIN || 'localhost'
     const url = `http://${subdomain}.${baseDomain}`
-    updateDeployment(deploymentId, { status: 'running', url })
+    updateDeployment(deploymentId, {
+      status: 'running',
+      url,
+      deploy_duration_ms: Date.now() - deployStartedAt,
+      last_failure_at: null,
+      last_failure_stage: null,
+    })
     emitStatus(deploymentId, 'running')
     emitLog(deploymentId, 'system', `Live → ${url}`)
-    recordDeploymentEvent(deploymentId, 'runtime_live', 'Deployment is live', { url })
+    recordDeploymentEvent(deploymentId, 'runtime_live', 'Deployment is live', {
+      url,
+      totalDurationMs: Date.now() - pipelineStartedAt,
+    })
 
     reachedRunning = true
     startRuntimeLogs(deploymentId, containerName)
@@ -141,6 +164,10 @@ export async function runPipeline(
     updateDeployment(deploymentId, { status: 'failed', error: message })
     emitStatus(deploymentId, 'failed')
     emitLog(deploymentId, 'system', `Pipeline failed: ${message}`)
+    updateDeployment(deploymentId, {
+      last_failure_at: new Date().toISOString(),
+      last_failure_stage: currentStage,
+    })
     recordDeploymentEvent(deploymentId, 'deployment_failed', 'Deployment failed', {
       stage: currentStage,
       error: message,
@@ -174,6 +201,9 @@ export async function runRedeployPipeline(
   const mergedEnv = { ...envVars }
   let reachedRunning = false
   let currentStage = 'initialize'
+  const pipelineStartedAt = Date.now()
+  let deployStartedAt = 0
+  let buildStartedAt = 0
 
   try {
     // ── 0. Ensure addons are running ──────────────────────────────────────────
@@ -222,17 +252,27 @@ export async function runRedeployPipeline(
     const imageTag = `nobuild-${id}:latest`
 
     currentStage = 'build'
+    buildStartedAt = Date.now()
     recordDeploymentEvent(deploymentId, 'build_started', 'Building replacement image', { imageTag })
-    const [appPort] = await Promise.all([
+    const [appPort, profile] = await Promise.all([
       detectPort(srcPath).then((p) => p ?? 3000),
+      detectAppProfile(srcPath),
       buildImage(srcPath, imageTag, deploymentId, name, envVars),
     ])
 
-    updateDeployment(deploymentId, { app_port: appPort, image_tag: imageTag })
+    updateDeployment(deploymentId, {
+      app_port: appPort,
+      image_tag: imageTag,
+      build_duration_ms: Date.now() - buildStartedAt,
+      detected_language: profile.language,
+      detected_framework: profile.framework,
+      detected_start_command: profile.startCommand,
+    })
     recordDeploymentEvent(deploymentId, 'build_completed', 'Replacement image built', { imageTag, appPort })
 
     // ── 3. Start next container (old still serving) ───────────────────────────
     currentStage = 'container'
+    deployStartedAt = Date.now()
     emitLog(deploymentId, 'system', 'Starting new container…')
     const containerId = await runContainer(nextContainerName, imageTag, appPort, mergedEnv)
     recordDeploymentEvent(deploymentId, 'container_started', 'Replacement container started', {
@@ -274,10 +314,16 @@ export async function runRedeployPipeline(
       url,
       container_id: containerId,
       container_name: nextContainerName,
+      deploy_duration_ms: Date.now() - deployStartedAt,
+      last_failure_at: null,
+      last_failure_stage: null,
     })
     emitStatus(deploymentId, 'running')
     emitLog(deploymentId, 'system', `Redeployed → ${url}`)
-    recordDeploymentEvent(deploymentId, 'runtime_live', 'Redeploy is live', { url })
+    recordDeploymentEvent(deploymentId, 'runtime_live', 'Redeploy is live', {
+      url,
+      totalDurationMs: Date.now() - pipelineStartedAt,
+    })
 
     reachedRunning = true
     startRuntimeLogs(deploymentId, nextContainerName)
@@ -286,6 +332,10 @@ export async function runRedeployPipeline(
     updateDeployment(deploymentId, { status: 'failed', error: message })
     emitStatus(deploymentId, 'failed')
     emitLog(deploymentId, 'system', `Redeploy failed: ${message}`)
+    updateDeployment(deploymentId, {
+      last_failure_at: new Date().toISOString(),
+      last_failure_stage: currentStage,
+    })
     recordDeploymentEvent(deploymentId, 'deployment_failed', 'Redeploy failed', {
       stage: currentStage,
       error: message,

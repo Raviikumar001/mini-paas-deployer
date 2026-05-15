@@ -20,6 +20,13 @@ export interface Deployment {
   pr_number: number | null
   pr_url: string | null
   is_preview: number
+  build_duration_ms: number | null
+  deploy_duration_ms: number | null
+  last_failure_at: string | null
+  last_failure_stage: string | null
+  detected_language: string | null
+  detected_framework: string | null
+  detected_start_command: string | null
   status: DeploymentStatus
   image_tag: string | null
   container_id: string | null
@@ -69,6 +76,14 @@ export interface DeploymentEvent {
   created_at: string
 }
 
+export interface DeploymentHealthCheck {
+  id: number
+  deployment_id: string
+  ok: number
+  latency_ms: number | null
+  created_at: string
+}
+
 let db: Database.Database
 
 export function getDb(): Database.Database {
@@ -94,6 +109,13 @@ export function initDb(): void {
       pr_number      INTEGER,
       pr_url         TEXT,
       is_preview     INTEGER NOT NULL DEFAULT 0,
+      build_duration_ms INTEGER,
+      deploy_duration_ms INTEGER,
+      last_failure_at TEXT,
+      last_failure_stage TEXT,
+      detected_language TEXT,
+      detected_framework TEXT,
+      detected_start_command TEXT,
       status         TEXT NOT NULL DEFAULT 'pending',
       image_tag      TEXT,
       container_id   TEXT,
@@ -128,6 +150,17 @@ export function initDb(): void {
 
     CREATE INDEX IF NOT EXISTS idx_deployment_events_deployment
       ON deployment_events(deployment_id, id);
+
+    CREATE TABLE IF NOT EXISTS deployment_health_checks (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      deployment_id  TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+      ok             INTEGER NOT NULL,
+      latency_ms     INTEGER,
+      created_at     TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_deployment_health_checks_deployment
+      ON deployment_health_checks(deployment_id, id);
   `)
 
   // Non-destructive migrations — adds columns if this is an existing DB
@@ -165,6 +198,34 @@ export function initDb(): void {
 
   try {
     getDb().exec(`ALTER TABLE deployments ADD COLUMN is_preview INTEGER NOT NULL DEFAULT 0`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN build_duration_ms INTEGER`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN deploy_duration_ms INTEGER`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN last_failure_at TEXT`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN last_failure_stage TEXT`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN detected_language TEXT`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN detected_framework TEXT`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN detected_start_command TEXT`)
   } catch { /* column already exists */ }
 }
 
@@ -305,4 +366,28 @@ export function getDeploymentEvents(deploymentId: string): DeploymentEvent[] {
   return getDb()
     .prepare('SELECT * FROM deployment_events WHERE deployment_id = ? ORDER BY id')
     .all(deploymentId) as DeploymentEvent[]
+}
+
+export function insertDeploymentHealthCheck(
+  deploymentId: string,
+  ok: boolean,
+  latencyMs: number | null,
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO deployment_health_checks (deployment_id, ok, latency_ms, created_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(deploymentId, ok ? 1 : 0, latencyMs, new Date().toISOString())
+}
+
+export function getDeploymentHealthChecks(deploymentId: string, limit = 24): DeploymentHealthCheck[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM deployment_health_checks
+       WHERE deployment_id = ?
+       ORDER BY id DESC
+       LIMIT ?`,
+    )
+    .all(deploymentId, limit) as DeploymentHealthCheck[]
 }
