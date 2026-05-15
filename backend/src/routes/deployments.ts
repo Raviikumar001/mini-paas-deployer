@@ -2,11 +2,12 @@ import { Hono } from 'hono'
 import { customAlphabet } from 'nanoid'
 import {
   createDeployment,
-  deleteDeployment,
   type Deployment,
   getDeploymentEvents,
   getDeploymentHealthChecks,
   getDeployment,
+  findDeploymentBySourceAndBranch,
+  listRecentDeploymentEvents,
   listDeployments,
   updateDeployment,
 } from '../db/schema.js'
@@ -16,6 +17,7 @@ import {
   ensureRawBodySize,
   ensureRequestSize,
   parseJsonBody,
+  normalizeGitUrl,
   validatePublicGitUrl,
 } from '../lib/http-input.js'
 import { recordDeploymentEvent } from '../services/deployment-events.js'
@@ -70,6 +72,11 @@ deploymentRoutes.get('/:id/health', (c) => {
   return c.json(getDeploymentHealthChecks(dep.id))
 })
 
+deploymentRoutes.get('/events/recent', (c) => {
+  const limit = Number(c.req.query('limit') ?? '60')
+  return c.json(listRecentDeploymentEvents(Number.isFinite(limit) ? Math.max(1, Math.min(limit, 200)) : 60))
+})
+
 
 deploymentRoutes.post('/', async (c) => {
   const lengthError = ensureRequestSize(c.req.header('content-length'), DEPLOYMENT_BODY_LIMIT)
@@ -102,9 +109,10 @@ deploymentRoutes.post('/', async (c) => {
     ...addon,
     persistent: addon.type === 'postgres' ? true : addon.persistent === true,
   }))
+  const canonicalGitUrl = normalizeGitUrl(gitUrl.url)
   const name = gitUrl.url.pathname.split('/').filter(Boolean).pop()?.replace(/\.git$/, '') ?? 'deployment'
   const id = nanoid(10)
-  const deployment = createDeployment(id, name, body.gitUrl, envVars, secretEnvVars, branch, addons)
+  const deployment = createDeployment(id, name, canonicalGitUrl, envVars, secretEnvVars, branch, addons)
   recordDeploymentEvent(id, 'deployment_created', 'Deployment queued', {
     repository: name,
     branch,
@@ -183,4 +191,81 @@ deploymentRoutes.post('/:id/redeploy', async (c) => {
   })
 
   return c.json(await toPublicDeployment(getDeployment(dep.id)!))
+})
+
+deploymentRoutes.post('/:id/promote', async (c) => {
+  const dep = getDeployment(c.req.param('id'))
+  if (!dep) return c.json({ error: 'not found' }, 404)
+  if (dep.is_preview !== 1) return c.json({ error: 'only preview deployments can be promoted' }, 422)
+  if (!dep.source_url) return c.json({ error: 'no source URL to promote from' }, 422)
+
+  const targetBranch = dep.pr_base_branch?.trim() || 'main'
+  const cloneBranch = dep.branch?.trim() || targetBranch
+  const checkoutSha = dep.source_sha ?? undefined
+  const existing = findDeploymentBySourceAndBranch(dep.source_url, targetBranch)
+
+  if (existing && ['building', 'deploying', 'redeploying'].includes(existing.status)) {
+    return c.json({ error: 'deployment already in progress' }, 409)
+  }
+
+  const sourceEnv = parseRecord((existing ?? dep).env_vars)
+  const sourceSecrets = parseRecord((existing ?? dep).secret_env_vars)
+  const mergedEnvVars = { ...sourceEnv, ...sourceSecrets }
+  const addons = parseAddons((existing ?? dep).addons)
+  const repoName = new URL(dep.source_url).pathname.split('/').filter(Boolean).pop() ?? dep.name
+
+  if (existing) {
+    updateDeployment(existing.id, {
+      status: 'redeploying',
+      error: null,
+      source_sha: dep.source_sha,
+      source_message: dep.source_message,
+    })
+    recordDeploymentEvent(existing.id, 'deployment_created', 'Promotion queued from preview', {
+      previewDeploymentId: dep.id,
+      prNumber: dep.pr_number,
+      targetBranch,
+    })
+
+    runRedeployPipeline(
+      existing.id,
+      existing.source_url!,
+      existing.name,
+      existing.container_name ?? '',
+      mergedEnvVars,
+      targetBranch,
+      addons,
+      { cloneBranch, checkoutSha },
+    ).catch((err) => {
+      updateDeployment(existing.id, { status: 'failed', error: String(err) })
+    })
+
+    return c.json(await toPublicDeployment(getDeployment(existing.id)!))
+  }
+
+  const id = nanoid(10)
+  const created = createDeployment(id, repoName.replace(/\.git$/, ''), dep.source_url, sourceEnv, sourceSecrets, targetBranch, addons, {
+    sourceSha: dep.source_sha,
+    sourceMessage: dep.source_message,
+    isPreview: false,
+  })
+  recordDeploymentEvent(id, 'deployment_created', 'Production deployment queued from preview promotion', {
+    previewDeploymentId: dep.id,
+    prNumber: dep.pr_number,
+    targetBranch,
+  })
+
+  runPipeline(
+    id,
+    dep.source_url,
+    created.name,
+    mergedEnvVars,
+    targetBranch,
+    addons,
+    { cloneBranch, checkoutSha },
+  ).catch((err) => {
+    updateDeployment(id, { status: 'failed', error: String(err) })
+  })
+
+  return c.json(await toPublicDeployment(created), 202)
 })

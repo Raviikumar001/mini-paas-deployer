@@ -256,4 +256,31 @@ describe('POST /api/webhook/github', () => {
     expect(runPipeline).not.toHaveBeenCalled()
     expect(runRedeployPipeline).not.toHaveBeenCalled()
   })
+
+  it('matches existing deployments even when webhook clone URLs use a different .git suffix form', async () => {
+    const createRes = await app.request('/github', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pushPayload('canonical-match')),
+    })
+    expect(createRes.status).toBe(202)
+
+    vi.clearAllMocks()
+
+    const payload = pushPayload('canonical-match')
+    payload.repository.clone_url = 'https://github.com/user/canonical-match.git'
+
+    const res = await app.request('/github', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GitHub-Event': 'push',
+      },
+      body: JSON.stringify(payload),
+    })
+
+    expect(res.status).toBe(202)
+    expect(runRedeployPipeline).toHaveBeenCalledOnce()
+    expect(runPipeline).not.toHaveBeenCalled()
+  })
 })

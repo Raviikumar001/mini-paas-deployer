@@ -13,7 +13,11 @@ import {
 import { useDeployments } from '../hooks/useDeployments'
 import { DeployForm } from '../components/DeployForm'
 import { DeploymentList } from '../components/DeploymentList'
+import { WorkspaceActivity } from '../components/WorkspaceActivity'
+import { WorkspaceLogs } from '../components/WorkspaceLogs'
 import type { Deployment } from '../api/client'
+
+type NavKey = 'home' | 'services' | 'deploys' | 'resources' | 'logs'
 
 function countByStatus(deployments: Deployment[], status: Deployment['status']) {
   return deployments.filter((deployment) => deployment.status === status).length
@@ -25,15 +29,36 @@ function countAddons(deployments: Deployment[]) {
 
 export function HomePage() {
   const { data: deployments = [], error, isLoading } = useDeployments()
-  const compact = useCompactLayout()
+  const layout = useLayoutMode()
+  const compact = layout !== 'desktop'
+  const stacked = layout === 'mobile'
+  const [activeNav, setActiveNav] = useState<NavKey>('home')
   const live = countByStatus(deployments, 'running')
   const active = deployments.filter((deployment) =>
     ['pending', 'building', 'deploying', 'redeploying'].includes(deployment.status),
   ).length
+  const deploymentsWithAddons = deployments.filter((deployment) => (deployment.addon_statuses?.length ?? 0) > 0)
+  const logFocusedDeployments = [...deployments].sort((a, b) => {
+    const score = (deployment: Deployment) => {
+      if (['building', 'deploying', 'redeploying'].includes(deployment.status)) return 3
+      if (deployment.status === 'failed') return 2
+      if (deployment.status === 'running') return 1
+      return 0
+    }
+    return score(b) - score(a)
+  })
+  const view = getViewModel(activeNav, deployments, deploymentsWithAddons, logFocusedDeployments, live)
+  const navItems: Array<{ key: NavKey; label: string; icon: typeof Home; count?: number }> = [
+    { key: 'home', label: 'Home', icon: Home },
+    { key: 'services', label: 'Services', icon: Server, count: deployments.length },
+    { key: 'deploys', label: 'Deploys', icon: GitBranch, count: active },
+    { key: 'resources', label: 'Resources', icon: Boxes, count: deploymentsWithAddons.length },
+    { key: 'logs', label: 'Logs', icon: Braces },
+  ]
 
   return (
-    <div style={compact ? compactShellStyle : shellStyle}>
-      <aside style={compact ? compactSidebarStyle : sidebarStyle}>
+    <div style={stacked ? compactShellStyle : layout === 'tablet' ? tabletShellStyle : shellStyle}>
+      <aside style={stacked ? compactSidebarStyle : layout === 'tablet' ? tabletSidebarStyle : sidebarStyle}>
         <div style={brandStyle}>
           <div style={brandMarkStyle}>N</div>
           <div>
@@ -50,26 +75,25 @@ export function HomePage() {
           </span>
         </div>
 
-        <nav style={compact ? compactNavStyle : navStyle}>
-          {[
-            ['Home', Home],
-            ['Services', Server],
-            ['Deploys', GitBranch],
-            ['Resources', Boxes],
-            ['Logs', Braces],
-          ].map(([label, Icon]) => {
-            const IconComponent = Icon as typeof Home
+        <nav style={stacked ? compactNavStyle : navStyle}>
+          {navItems.map(({ key, label, icon: IconComponent, count }) => {
             return (
-              <button key={label as string} style={label === 'Home' ? activeNavStyle : navItemStyle}>
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveNav(key)}
+                style={activeNav === key ? activeNavStyle : navItemStyle}
+              >
                 <IconComponent size={16} />
-                {label as string}
+                <span style={{ flex: 1 }}>{label}</span>
+                {typeof count === 'number' && <span style={navCountStyle}>{count}</span>}
               </button>
             )
           })}
         </nav>
       </aside>
 
-      <main style={compact ? compactMainStyle : mainStyle}>
+      <main style={stacked ? compactMainStyle : layout === 'tablet' ? tabletMainStyle : mainStyle}>
         <header style={compact ? compactTopbarStyle : topbarStyle}>
           <div style={topbarCopyStyle}>
             <div style={breadcrumbStyle}>
@@ -95,26 +119,50 @@ export function HomePage() {
           <section style={servicesSectionStyle}>
             <div style={sectionHeaderStyle}>
               <div>
-                <div style={sectionKickerStyle}>Service catalog</div>
-                <h2 style={sectionTitleStyle}>Deployments</h2>
+                <div style={sectionKickerStyle}>{view.kicker}</div>
+                <h2 style={sectionTitleStyle}>{view.title}</h2>
+                <p style={sectionCopyStyle}>{view.copy}</p>
               </div>
-              <span style={countStyle}>{deployments.length}</span>
+              <span style={countStyle}>{view.deployments.length}</span>
             </div>
             {isLoading && deployments.length === 0 ? (
               <div style={loadingStyle}>Loading services</div>
+            ) : activeNav === 'deploys' ? (
+              <WorkspaceActivity deployments={deployments} />
+            ) : activeNav === 'logs' ? (
+              <WorkspaceLogs deployments={view.deployments} />
+            ) : view.deployments.length === 0 ? (
+              <div style={loadingStyle}>{view.empty}</div>
             ) : (
-              <DeploymentList deployments={deployments} />
+              <DeploymentList deployments={view.deployments} />
             )}
           </section>
 
-          <aside style={onboardingStyle}>
-            <div style={sectionKickerStyle}>Golden path</div>
-            <h2 style={panelTitleStyle}>Launch flow</h2>
-            <div style={stepListStyle}>
-              <Step done={deployments.length > 0} title="Connect Git" copy="Use a public HTTPS repository and choose a branch." />
-              <Step done={deployments.some((deployment) => (deployment.addon_statuses?.length ?? 0) > 0)} title="Attach resources" copy="Add Postgres or Redis and let the platform inject URLs." />
-              <Step done={live > 0} title="Ship and observe" copy="Watch logs, open the URL, then redeploy from the row." />
-            </div>
+          <aside style={stacked ? compactOnboardingStyle : layout === 'tablet' ? tabletOnboardingStyle : onboardingStyle}>
+            {activeNav === 'home' ? (
+              <>
+                <div style={sectionKickerStyle}>Golden path</div>
+                <h2 style={panelTitleStyle}>Launch flow</h2>
+                <div style={stepListStyle}>
+                  <Step done={deployments.length > 0} title="Connect Git" copy="Use a public HTTPS repository and choose a branch." />
+                  <Step done={deployments.some((deployment) => (deployment.addon_statuses?.length ?? 0) > 0)} title="Attach resources" copy="Add Postgres or Redis and let the platform inject URLs." />
+                  <Step done={live > 0} title="Ship and observe" copy="Watch logs, open the URL, then redeploy from the row." />
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={sectionKickerStyle}>{view.sideKicker}</div>
+                <h2 style={panelTitleStyle}>{view.sideTitle}</h2>
+                <div style={stepListStyle}>
+                  {view.sideNotes.map((note) => (
+                    <div key={note.title} style={noteStyle}>
+                      <strong style={stepTitleStyle}>{note.title}</strong>
+                      <span style={stepCopyStyle}>{note.copy}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </aside>
         </div>
       </main>
@@ -122,18 +170,105 @@ export function HomePage() {
   )
 }
 
-function useCompactLayout() {
-  const [compact, setCompact] = useState(() =>
-    typeof window === 'undefined' ? false : window.innerWidth < 980,
+function getViewModel(
+  activeNav: NavKey,
+  deployments: Deployment[],
+  deploymentsWithAddons: Deployment[],
+  logFocusedDeployments: Deployment[],
+  live: number,
+) {
+  switch (activeNav) {
+    case 'services':
+      return {
+        kicker: 'Service catalog',
+        title: 'All services',
+        copy: 'Every deployment in the workspace, regardless of state.',
+        deployments,
+        empty: 'No services yet',
+        sideKicker: 'Catalog view',
+        sideTitle: 'Service inventory',
+        sideNotes: [
+          { title: `${deployments.length} tracked services`, copy: 'This view keeps the full workspace inventory visible.' },
+          { title: `${live} live right now`, copy: 'Running services stay openable from the row actions.' },
+        ],
+      }
+    case 'deploys':
+      return {
+        kicker: 'Deploy activity',
+        title: 'Recent deploys',
+        copy: 'Focus on active and recently updated deploy work.',
+        deployments: [...deployments].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)),
+        empty: 'No deploy activity yet',
+        sideKicker: 'Deploy view',
+        sideTitle: 'Release focus',
+        sideNotes: [
+          { title: 'Use timeline first', copy: 'Open a row and check the timeline tab to understand progress or failure stage.' },
+          { title: 'Redeploy is built in', copy: 'Failed or running services can be redeployed directly from the row actions.' },
+        ],
+      }
+    case 'resources':
+      return {
+        kicker: 'Infrastructure',
+        title: 'Attached resources',
+        copy: 'Services with Postgres or Redis attached.',
+        deployments: deploymentsWithAddons,
+        empty: 'No attached resources yet',
+        sideKicker: 'Resource view',
+        sideTitle: 'Infrastructure map',
+        sideNotes: [
+          { title: `${deploymentsWithAddons.length} services with add-ons`, copy: 'This view filters for services that carry platform-managed resources.' },
+          { title: 'Environment tab shows URLs', copy: 'Injected DATABASE_URL and REDIS_URL values stay visible in each deployment detail panel.' },
+        ],
+      }
+    case 'logs':
+      return {
+        kicker: 'Runtime focus',
+        title: 'Logs and failures',
+        copy: 'Start with the noisiest or most active services first.',
+        deployments: logFocusedDeployments,
+        empty: 'No deployment logs yet',
+        sideKicker: 'Log view',
+        sideTitle: 'Debug flow',
+        sideNotes: [
+          { title: 'Open a service row', copy: 'The logs tab is still the raw stream, while timeline gives the higher-level story.' },
+          { title: 'Failed items rise first', copy: 'This view prioritizes in-flight and failed services to cut down scanning.' },
+        ],
+      }
+    case 'home':
+    default:
+      return {
+        kicker: 'Service catalog',
+        title: 'Deployments',
+        copy: 'Your platform workspace, with live status, logs, resources, and deploy detail.',
+        deployments,
+        empty: 'No services yet',
+        sideKicker: 'Golden path',
+        sideTitle: 'Launch flow',
+        sideNotes: [],
+      }
+  }
+}
+
+type LayoutMode = 'desktop' | 'tablet' | 'mobile'
+
+function useLayoutMode() {
+  const [layout, setLayout] = useState<LayoutMode>(() =>
+    typeof window === 'undefined' ? 'desktop' : getLayoutMode(window.innerWidth),
   )
 
   useEffect(() => {
-    const onResize = () => setCompact(window.innerWidth < 980)
+    const onResize = () => setLayout(getLayoutMode(window.innerWidth))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  return compact
+  return layout
+}
+
+function getLayoutMode(width: number): LayoutMode {
+  if (width < 1100) return 'mobile'
+  if (width < 1360) return 'tablet'
+  return 'desktop'
 }
 
 function Metric({ label, value, icon }: { label: string; value: number; icon: ReactNode }) {
@@ -173,6 +308,11 @@ const compactShellStyle: CSSProperties = {
   display: 'block',
 }
 
+const tabletShellStyle: CSSProperties = {
+  ...shellStyle,
+  gridTemplateColumns: '208px minmax(0, 1fr)',
+}
+
 const sidebarStyle: CSSProperties = {
   background: 'var(--panel)',
   borderRight: '1px solid var(--line)',
@@ -187,6 +327,12 @@ const compactSidebarStyle: CSSProperties = {
   borderBottom: '1px solid var(--line)',
   borderRight: 0,
   gap: 14,
+  padding: 18,
+}
+
+const tabletSidebarStyle: CSSProperties = {
+  ...sidebarStyle,
+  gap: 16,
   padding: 18,
 }
 
@@ -235,7 +381,7 @@ const workspaceStyle: CSSProperties = {
 
 const compactWorkspaceStyle: CSSProperties = {
   ...workspaceStyle,
-  maxWidth: 360,
+  maxWidth: 1000,
 }
 
 const workspaceBadgeStyle: CSSProperties = {
@@ -293,9 +439,23 @@ const activeNavStyle: CSSProperties = {
   fontWeight: 700,
 }
 
+const navCountStyle: CSSProperties = {
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 10,
+  padding: '2px 5px',
+}
+
 const mainStyle: CSSProperties = {
   minWidth: 0,
   padding: '32px 40px 48px',
+}
+
+const tabletMainStyle: CSSProperties = {
+  ...mainStyle,
+  padding: '26px 24px 40px',
 }
 
 const compactMainStyle: CSSProperties = {
@@ -345,7 +505,7 @@ const titleStyle: CSSProperties = {
 
 const compactTitleStyle: CSSProperties = {
   ...titleStyle,
-  fontSize: 44,
+  fontSize: 48,
 }
 
 const subtitleStyle: CSSProperties = {
@@ -443,6 +603,14 @@ const sectionTitleStyle: CSSProperties = {
   letterSpacing: '-0.02em',
 }
 
+const sectionCopyStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  fontSize: 14,
+  lineHeight: 1.45,
+  marginTop: 8,
+  maxWidth: 560,
+}
+
 const panelTitleStyle: CSSProperties = {
   fontSize: 22,
   fontWeight: 600,
@@ -467,6 +635,17 @@ const onboardingStyle: CSSProperties = {
   top: 24,
 }
 
+const tabletOnboardingStyle: CSSProperties = {
+  ...onboardingStyle,
+  padding: 18,
+}
+
+const compactOnboardingStyle: CSSProperties = {
+  ...onboardingStyle,
+  padding: 16,
+  position: 'static',
+}
+
 const stepListStyle: CSSProperties = {
   display: 'grid',
   gap: 16,
@@ -476,6 +655,11 @@ const stepStyle: CSSProperties = {
   display: 'grid',
   gap: 12,
   gridTemplateColumns: '28px minmax(0, 1fr)',
+}
+
+const noteStyle: CSSProperties = {
+  display: 'grid',
+  gap: 4,
 }
 
 const stepIndexStyle: CSSProperties = {

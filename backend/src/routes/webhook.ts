@@ -5,7 +5,6 @@ import {
   createDeployment,
   findDeploymentBySourceAndBranch,
   findPreviewDeploymentByRepoAndPr,
-  getDeployment,
   updateDeployment,
 } from '../db/schema.js'
 import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
@@ -14,6 +13,7 @@ import { destroyDeployment } from '../services/deployment-lifecycle.js'
 import {
   ensureRawBodySize,
   ensureRequestSize,
+  normalizeGitUrl,
   parseJsonBody,
   validatePublicGitUrl,
 } from '../lib/http-input.js'
@@ -118,6 +118,7 @@ webhookRoutes.post('/github', async (c) => {
   if (!gitUrl) return c.json({ error: 'missing repository.clone_url' }, 400)
   const validatedGitUrl = validatePublicGitUrl(gitUrl)
   if (!validatedGitUrl.ok) return c.json({ error: validatedGitUrl.error }, 400)
+  const canonicalGitUrl = normalizeGitUrl(validatedGitUrl.url)
 
   if (eventName === 'pull_request') {
     const prPayload = payload as GitHubPRPayload
@@ -128,7 +129,7 @@ webhookRoutes.post('/github', async (c) => {
 
     if (!prNumber || !branch) return c.json({ error: 'could not determine pull request branch' }, 400)
 
-    const existingPreview = findPreviewDeploymentByRepoAndPr(gitUrl, prNumber)
+    const existingPreview = findPreviewDeploymentByRepoAndPr(canonicalGitUrl, prNumber)
     const sourceSha = pr.head?.sha ?? null
     const sourceMessage = pr.title ?? null
     const prUrl = pr.html_url ?? null
@@ -192,11 +193,12 @@ webhookRoutes.post('/github', async (c) => {
 
     const name = previewDeploymentName(payload.repository?.name ?? 'deployment', prNumber)
     const id = nanoid(10)
-    createDeployment(id, name, gitUrl, {}, {}, branch, [], {
+    createDeployment(id, name, canonicalGitUrl, {}, {}, branch, [], {
       sourceSha,
       sourceMessage,
       prNumber,
       prUrl,
+      prBaseBranch: pr.base?.ref ?? 'main',
       isPreview: true,
     })
     recordDeploymentEvent(id, 'deployment_created', 'Preview deployment queued', {
@@ -228,7 +230,7 @@ webhookRoutes.post('/github', async (c) => {
   const branch = parseBranch(push.ref)
   if (!branch) return c.json({ error: 'could not determine branch' }, 400)
 
-  const existing = findDeploymentBySourceAndBranch(gitUrl, branch)
+  const existing = findDeploymentBySourceAndBranch(canonicalGitUrl, branch)
   const sourceSha = push.head_commit?.id ?? null
   const sourceMessage = push.head_commit?.message ?? null
 
@@ -265,7 +267,7 @@ webhookRoutes.post('/github', async (c) => {
 
   const name = payload.repository?.name ?? 'deployment'
   const id = nanoid(10)
-  createDeployment(id, name, gitUrl, {}, {}, branch, [], {
+  createDeployment(id, name, canonicalGitUrl, {}, {}, branch, [], {
     sourceSha,
     sourceMessage,
   })

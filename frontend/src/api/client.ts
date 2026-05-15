@@ -17,6 +17,7 @@ export interface Deployment {
   source_message: string | null
   pr_number: number | null
   pr_url: string | null
+  pr_base_branch: string | null
   is_preview: number
   build_duration_ms: number | null
   deploy_duration_ms: number | null
@@ -117,6 +118,9 @@ export const api = {
     events: (id: string): Promise<DeploymentEvent[]> =>
       fetch(`${BASE}/deployments/${id}/events`).then(handle<DeploymentEvent[]>),
 
+    recentEvents: (limit = 60): Promise<DeploymentEvent[]> =>
+      fetch(`${BASE}/deployments/events/recent?limit=${limit}`).then(handle<DeploymentEvent[]>),
+
     health: (id: string): Promise<DeploymentHealthCheck[]> =>
       fetch(`${BASE}/deployments/${id}/health`).then(handle<DeploymentHealthCheck[]>),
 
@@ -142,6 +146,11 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ envVars, secretEnvVars }),
+      }).then(handle<Deployment>),
+
+    promote: (id: string): Promise<Deployment> =>
+      fetch(`${BASE}/deployments/${id}/promote`, {
+        method: 'POST',
       }).then(handle<Deployment>),
 
     remove: (id: string): Promise<void> =>

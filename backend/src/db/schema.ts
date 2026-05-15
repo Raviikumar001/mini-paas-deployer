@@ -19,6 +19,7 @@ export interface Deployment {
   source_message: string | null
   pr_number: number | null
   pr_url: string | null
+  pr_base_branch: string | null
   is_preview: number
   build_duration_ms: number | null
   deploy_duration_ms: number | null
@@ -108,6 +109,7 @@ export function initDb(): void {
       source_message TEXT,
       pr_number      INTEGER,
       pr_url         TEXT,
+      pr_base_branch TEXT,
       is_preview     INTEGER NOT NULL DEFAULT 0,
       build_duration_ms INTEGER,
       deploy_duration_ms INTEGER,
@@ -197,6 +199,10 @@ export function initDb(): void {
   } catch { /* column already exists */ }
 
   try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN pr_base_branch TEXT`)
+  } catch { /* column already exists */ }
+
+  try {
     getDb().exec(`ALTER TABLE deployments ADD COLUMN is_preview INTEGER NOT NULL DEFAULT 0`)
   } catch { /* column already exists */ }
 
@@ -244,6 +250,7 @@ export function createDeployment(
     sourceMessage?: string | null
     prNumber?: number | null
     prUrl?: string | null
+    prBaseBranch?: string | null
     isPreview?: boolean
   } = {},
 ): Deployment {
@@ -251,10 +258,10 @@ export function createDeployment(
   getDb()
     .prepare(
       `INSERT INTO deployments (
-         id, name, source_url, branch, source_sha, source_message, pr_number, pr_url, is_preview,
+         id, name, source_url, branch, source_sha, source_message, pr_number, pr_url, pr_base_branch, is_preview,
          status, env_vars, secret_env_vars, addons, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -265,6 +272,7 @@ export function createDeployment(
       metadata.sourceMessage ?? null,
       metadata.prNumber ?? null,
       metadata.prUrl ?? null,
+      metadata.prBaseBranch ?? null,
       metadata.isPreview ? 1 : 0,
       JSON.stringify(envVars),
       JSON.stringify(secretEnvVars),
@@ -366,6 +374,16 @@ export function getDeploymentEvents(deploymentId: string): DeploymentEvent[] {
   return getDb()
     .prepare('SELECT * FROM deployment_events WHERE deployment_id = ? ORDER BY id')
     .all(deploymentId) as DeploymentEvent[]
+}
+
+export function listRecentDeploymentEvents(limit = 60): DeploymentEvent[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM deployment_events
+       ORDER BY id DESC
+       LIMIT ?`,
+    )
+    .all(limit) as DeploymentEvent[]
 }
 
 export function insertDeploymentHealthCheck(

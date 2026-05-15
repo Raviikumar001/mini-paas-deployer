@@ -26,7 +26,7 @@ vi.mock('../services/addons.js', () => ({
 }))
 
 // DATABASE_PATH=':memory:' is set in vitest.config.ts before this module loads
-import { getDeployment, getDeploymentEvents, initDb } from '../db/schema.js'
+import { createDeployment, getDeployment, getDeploymentEvents, initDb } from '../db/schema.js'
 import { deploymentRoutes } from '../routes/deployments.js'
 import { runPipeline, runRedeployPipeline } from '../services/pipeline.js'
 import { stopPostgres, stopRedis } from '../services/addons.js'
@@ -319,6 +319,44 @@ describe('POST /api/deployments/:id/redeploy', () => {
       { VITE_PUBLIC_VALUE: 'visible', API_TOKEN: 'super-secret' },
       'main',
       [],
+    )
+  })
+})
+
+describe('POST /api/deployments/:id/promote', () => {
+  it('creates a production deployment from a preview deployment', async () => {
+    const preview = createDeployment(
+      'preview1234',
+      'pr-42-demo',
+      'https://github.com/user/demo',
+      { PREVIEW_FLAG: 'true' },
+      {},
+      'feature/demo',
+      [],
+      {
+        sourceSha: 'abc123def',
+        sourceMessage: 'Preview commit',
+        prNumber: 42,
+        prBaseBranch: 'main',
+        isPreview: true,
+      },
+    )
+
+    const res = await app.request(`/${preview.id}/promote`, { method: 'POST' })
+    expect(res.status).toBe(202)
+
+    const body = await res.json() as { id: string; branch: string | null; is_preview: number; source_sha: string | null }
+    expect(body.branch).toBe('main')
+    expect(body.is_preview).toBe(0)
+    expect(body.source_sha).toBe('abc123def')
+    expect(runPipeline).toHaveBeenCalledWith(
+      body.id,
+      'https://github.com/user/demo',
+      'demo',
+      { PREVIEW_FLAG: 'true' },
+      'main',
+      [],
+      { cloneBranch: 'feature/demo', checkoutSha: 'abc123def' },
     )
   })
 })

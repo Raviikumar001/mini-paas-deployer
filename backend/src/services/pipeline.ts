@@ -39,6 +39,10 @@ export async function runPipeline(
   envVars: Record<string, string> = {},
   branch?: string,
   addons: Addon[] = [],
+  sourceRef?: {
+    cloneBranch?: string
+    checkoutSha?: string
+  },
 ): Promise<void> {
   const srcPath = join(TMP, `build-${deploymentId}`)
   const mergedEnv = { ...envVars }
@@ -86,7 +90,7 @@ export async function runPipeline(
     recordDeploymentEvent(deploymentId, 'clone_started', 'Cloning repository', { gitUrl, branch: branch ?? 'main' })
     emitStatus(deploymentId, 'building')
     updateDeployment(deploymentId, { status: 'building' })
-    await cloneRepo(gitUrl, srcPath, deploymentId, branch)
+    await cloneRepo(gitUrl, srcPath, deploymentId, branch, sourceRef)
     recordDeploymentEvent(deploymentId, 'clone_completed', 'Repository cloned', { branch: branch ?? 'main' })
 
     // ── 2. Detect port + build image in parallel ──────────────────────────────
@@ -194,6 +198,10 @@ export async function runRedeployPipeline(
   envVars: Record<string, string> = {},
   branch?: string,
   addons: Addon[] = [],
+  sourceRef?: {
+    cloneBranch?: string
+    checkoutSha?: string
+  },
 ): Promise<void> {
   const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
   const srcPath = join(TMP, `build-${deploymentId}-redeploy`)
@@ -245,7 +253,7 @@ export async function runRedeployPipeline(
     recordDeploymentEvent(deploymentId, 'clone_started', 'Cloning repository for redeploy', { gitUrl, branch: branch ?? 'main' })
     emitStatus(deploymentId, 'redeploying')
     updateDeployment(deploymentId, { status: 'redeploying' })
-    await cloneRepo(gitUrl, srcPath, deploymentId, branch)
+    await cloneRepo(gitUrl, srcPath, deploymentId, branch, sourceRef)
     recordDeploymentEvent(deploymentId, 'clone_completed', 'Fresh copy cloned', { branch: branch ?? 'main' })
 
     // ── 2. Detect port + build new image in parallel ──────────────────────────

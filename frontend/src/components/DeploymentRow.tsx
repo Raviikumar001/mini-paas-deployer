@@ -5,11 +5,12 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  GitMerge,
   RotateCcw,
   Trash2,
 } from 'lucide-react'
 import type { Deployment, DeploymentStatus } from '../api/client'
-import { useDeleteDeployment, useRedeployment } from '../hooks/useDeployments'
+import { useDeleteDeployment, usePromoteDeployment, useRedeployment } from '../hooks/useDeployments'
 import { DeploymentSystem } from './DeploymentSystem'
 import { LogPanel } from './LogPanel'
 import { DeploymentTimeline } from './DeploymentTimeline'
@@ -61,6 +62,7 @@ export function DeploymentRow({ deployment: dep }: Props) {
   const [tab, setTab] = useState<Tab>('overview')
   const { mutate: remove, isPending: removing } = useDeleteDeployment()
   const { mutate: redeploy, isPending: redeploying } = useRedeployment()
+  const { mutate: promote, isPending: promoting } = usePromoteDeployment()
 
   useEffect(() => {
     if (ACTIVE.has(dep.status)) {
@@ -72,6 +74,7 @@ export function DeploymentRow({ deployment: dep }: Props) {
   const status = STATUS_CONFIG[dep.status]
   const addonStatuses = dep.addon_statuses ?? []
   const canRedeploy = dep.status === 'running' || dep.status === 'failed' || dep.status === 'stopped'
+  const canPromote = dep.is_preview === 1 && canRedeploy
   const canOpen = (dep.status === 'running' || dep.status === 'redeploying') && dep.url
   const allEnvEntries = buildEnvEntries(dep)
 
@@ -133,6 +136,17 @@ export function DeploymentRow({ deployment: dep }: Props) {
           {canRedeploy && (
             <button type="button" disabled={redeploying} onClick={() => redeploy({ id: dep.id })} style={iconButtonStyle} title="Redeploy">
               <RotateCcw size={15} />
+            </button>
+          )}
+          {canPromote && (
+            <button
+              type="button"
+              disabled={promoting}
+              onClick={() => promote(dep.id)}
+              style={iconButtonStyle}
+              title="Promote preview to production"
+            >
+              <GitMerge size={15} />
             </button>
           )}
           <button type="button" onClick={() => setExpanded((value) => !value)} style={iconButtonStyle} title="Toggle details">

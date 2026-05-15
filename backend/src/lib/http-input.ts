@@ -1,5 +1,17 @@
 const GIT_HOSTS = new Set(['github.com', 'gitlab.com', 'bitbucket.org'])
 
+export function normalizeGitUrl(value: string | URL): string {
+  const url = typeof value === 'string' ? new URL(value) : new URL(value.toString())
+  const ownerRepo = url.pathname
+    .split('/')
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('/')
+    .replace(/\.git$/i, '')
+
+  return `${url.protocol}//${url.hostname.toLowerCase()}/${ownerRepo}`
+}
+
 export function ensureRequestSize(
   contentLength: string | undefined,
   maxBytes: number,
@@ -53,4 +65,3 @@ export function validatePublicGitUrl(value: string): { ok: true; url: URL } | { 
 
   return { ok: true, url }
 }
-

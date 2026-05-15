@@ -41,6 +41,16 @@ export function useRedeployment() {
   })
 }
 
+export function usePromoteDeployment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deployments.promote(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: DEPLOYMENTS_KEY })
+    },
+  })
+}
+
 export function useDeleteDeployment() {
   const qc = useQueryClient()
   return useMutation({

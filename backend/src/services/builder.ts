@@ -37,14 +37,24 @@ export async function cloneRepo(
   destPath: string,
   deploymentId: string,
   branch?: string,
+  options?: {
+    cloneBranch?: string
+    checkoutSha?: string
+  },
 ): Promise<void> {
+  const cloneBranch = options?.cloneBranch ?? branch
   const args = ['clone', '--depth=1']
-  if (branch && branch !== 'main') {
-    args.push('--branch', branch)
+  if (cloneBranch && cloneBranch !== 'main') {
+    args.push('--branch', cloneBranch)
   }
   args.push(url, destPath)
-  emitLog(deploymentId, 'system', `Cloning ${url}${branch && branch !== 'main' ? ` #${branch}` : ''}…`)
+  emitLog(deploymentId, 'system', `Cloning ${url}${cloneBranch && cloneBranch !== 'main' ? ` #${cloneBranch}` : ''}…`)
   await spawnStream('git', args, deploymentId)
+  if (options?.checkoutSha) {
+    emitLog(deploymentId, 'system', `Checking out ${options.checkoutSha.slice(0, 7)}…`)
+    await spawnStream('git', ['-C', destPath, 'fetch', '--depth=1', 'origin', options.checkoutSha], deploymentId)
+    await spawnStream('git', ['-C', destPath, 'checkout', options.checkoutSha], deploymentId)
+  }
   emitLog(deploymentId, 'system', 'Clone complete.')
 }
 
