@@ -4,7 +4,7 @@ import { createConnection } from 'net'
 
 const exec = promisify(execCb)
 
-const NETWORK = process.env.DOCKER_NETWORK ?? 'brimble_net'
+const NETWORK = process.env.DOCKER_NETWORK ?? 'nobuild_net'
 
 
 export async function runContainer(

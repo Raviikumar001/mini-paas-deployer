@@ -1,41 +1,7 @@
-import { useState, useEffect, type CSSProperties } from 'react'
+import type { CSSProperties } from 'react'
+import { GitBranch, Rocket, ShieldCheck } from 'lucide-react'
 import type { Deployment } from '../api/client'
 import { DeploymentRow } from './DeploymentRow'
-
-// ── Animated empty state ──────────────────────────────────────────────────────
-
-function EmptyState() {
-  const [text, setText] = useState('')
-  const [done, setDone] = useState(false)
-  const message = 'No deployments yet.'
-
-  useEffect(() => {
-    if (done) return
-    let i = 0
-    const t = setInterval(() => {
-      i++
-      setText(message.slice(0, i))
-      if (i >= message.length) { clearInterval(t); setDone(true) }
-    }, 55)
-    return () => clearInterval(t)
-  }, [done])
-
-  return (
-    <div style={emptyWrapStyle}>
-      <div style={emptyInnerStyle}>
-        <div style={{ alignItems: 'center', display: 'flex', gap: 0, marginBottom: 10 }}>
-          <span style={emptyTextStyle}>{text}</span>
-          {!done && <span style={cursorStyle} />}
-        </div>
-        <p style={emptySubStyle}>
-          Paste a public Git URL above and hit Deploy to get started.
-        </p>
-      </div>
-    </div>
-  )
-}
-
-// ── List ──────────────────────────────────────────────────────────────────────
 
 interface Props { deployments: Deployment[] }
 
@@ -43,7 +9,7 @@ export function DeploymentList({ deployments }: Props) {
   if (deployments.length === 0) return <EmptyState />
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style={listStyle}>
       {deployments.map((dep) => (
         <DeploymentRow key={dep.id} deployment={dep} />
       ))}
@@ -51,45 +17,83 @@ export function DeploymentList({ deployments }: Props) {
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const emptyWrapStyle: CSSProperties = {
-  backgroundImage: 'repeating-linear-gradient(-45deg, var(--bg-stripe) 0px, var(--bg-stripe) 6px, transparent 6px, transparent 14px)',
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 10,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  minHeight: 220,
+function EmptyState() {
+  return (
+    <div style={emptyStyle}>
+      <div style={emptyIconStyle}>
+        <Rocket size={24} />
+      </div>
+      <h3 style={emptyTitleStyle}>No services deployed</h3>
+      <p style={emptyCopyStyle}>Start with a public Git repository. The platform will build it, probe it, and assign a local subdomain.</p>
+      <div style={emptyStepsStyle}>
+        <span style={emptyStepStyle}><GitBranch size={14} /> Git source</span>
+        <span style={emptyStepStyle}><ShieldCheck size={14} /> Secret-safe env</span>
+        <span style={emptyStepStyle}><Rocket size={14} /> Live URL</span>
+      </div>
+    </div>
+  )
 }
 
-const emptyInnerStyle: CSSProperties = {
-  background: 'var(--bg-surface)' as string,
-  border: '0.5px solid var(--border-default)' as string,
-  borderRadius: 8,
-  padding: '20px 28px',
+const listStyle: CSSProperties = {
+  border: '1px solid var(--line)',
+  display: 'grid',
+}
+
+const emptyStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'linear-gradient(135deg, rgba(102,124,255,0.09), transparent 48%), var(--panel)',
+  border: '1px solid var(--line)',
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  minHeight: 360,
+  padding: 34,
   textAlign: 'center',
 }
 
-const emptyTextStyle: CSSProperties = {
-  color: 'var(--text-secondary)' as string,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 14,
-  fontWeight: 500,
+const emptyIconStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'var(--ink)',
+  color: 'var(--paper)',
+  display: 'flex',
+  height: 54,
+  justifyContent: 'center',
+  marginBottom: 18,
+  width: 58,
 }
 
-const cursorStyle: CSSProperties = {
-  animation: 'blink 1s step-end infinite',
-  background: 'var(--accent)' as string,
-  display: 'inline-block',
-  height: 16,
-  marginLeft: 2,
-  verticalAlign: 'text-bottom',
-  width: 2,
+const emptyTitleStyle: CSSProperties = {
+  fontSize: 28,
+  fontWeight: 600,
+  letterSpacing: '-0.03em',
+  marginBottom: 8,
 }
 
-const emptySubStyle: CSSProperties = {
-  color: 'var(--text-muted)' as string,
-  fontSize: 13,
-  marginTop: 4,
+const emptyCopyStyle: CSSProperties = {
+  color: 'var(--ink-soft)',
+  fontSize: 15,
+  lineHeight: 1.5,
+  maxWidth: 460,
+}
+
+const emptyStepsStyle: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 8,
+  justifyContent: 'center',
+  marginTop: 22,
+}
+
+const emptyStepStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  color: 'var(--ink-muted)',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 700,
+  gap: 7,
+  padding: '7px 9px',
+  textTransform: 'uppercase',
 }

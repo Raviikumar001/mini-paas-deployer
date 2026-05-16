@@ -1,9 +1,9 @@
-name: brimble
+name: nobuild
 
 networks:
   net:
     driver: bridge
-    name: brimble_net   # explicit name keeps DOCKER_NETWORK=brimble_net stable
+    name: nobuild_net   # explicit name keeps DOCKER_NETWORK=nobuild_net stable
 
 volumes:
   buildkit_cache:
@@ -14,6 +14,7 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
       - "2019:2019"   # admin API — backend patches deployment routes here at runtime
     volumes:
       - ./caddy/config.json:/config/caddy.json:ro
@@ -45,9 +46,10 @@ services:
     environment:
       DATABASE_PATH: /data/db.sqlite
       CADDY_ADMIN: http://caddy:2019
-      DOCKER_NETWORK: brimble_net
+      DOCKER_NETWORK: nobuild_net
       BUILDKIT_HOST: docker-container://buildkit
       PORT: 3001
+      BASE_DOMAIN: "${BASE_DOMAIN:-localhost}"
     depends_on:
       - caddy
       - buildkit

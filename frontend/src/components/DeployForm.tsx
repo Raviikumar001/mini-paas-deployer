@@ -1,348 +1,841 @@
-import { useState, type FormEvent, type CSSProperties } from 'react'
-import { Search, SlidersHorizontal, Plus, X, Rocket } from 'lucide-react'
+import { useDeferredValue, useEffect, useState, type CSSProperties, type FormEvent } from 'react'
+import {
+  Check,
+  Database,
+  GitBranch,
+  KeyRound,
+  Lock,
+  Plus,
+  Rocket,
+  Server,
+  Shield,
+  Trash2,
+  Unlock,
+  X,
+  Zap,
+} from 'lucide-react'
+import { api } from '../api/client'
 import { useCreateDeployment } from '../hooks/useDeployments'
+
+interface EnvPair { key: string; value: string; secret: boolean }
 
 function parseEnvFile(raw: string): EnvPair[] {
   return raw
     .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('#'))
-    .flatMap((l) => {
-      const idx = l.indexOf('=')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .flatMap((line) => {
+      const idx = line.indexOf('=')
       if (idx === -1) return []
-      const key = l.slice(0, idx).trim()
+      const key = line.slice(0, idx).trim()
       if (!key) return []
-      let value = l.slice(idx + 1).trim()
+      let value = line.slice(idx + 1).trim()
       if (
         (value.startsWith('"') && value.endsWith('"')) ||
         (value.startsWith("'") && value.endsWith("'"))
-      ) value = value.slice(1, -1)
-      return [{ key, value }]
+      ) {
+        value = value.slice(1, -1)
+      }
+      return [{ key, value, secret: false }]
     })
 }
 
-interface EnvPair { key: string; value: string }
-
-function pairsToRecord(pairs: EnvPair[]): Record<string, string> {
-  return Object.fromEntries(pairs.filter((p) => p.key).map((p) => [p.key, p.value]))
+function splitPairs(pairs: EnvPair[]): {
+  envVars: Record<string, string>
+  secretEnvVars: Record<string, string>
+} {
+  const envVars: Record<string, string> = {}
+  const secretEnvVars: Record<string, string> = {}
+  for (const pair of pairs) {
+    if (!pair.key.trim()) continue
+    if (pair.secret) secretEnvVars[pair.key.trim()] = pair.value
+    else envVars[pair.key.trim()] = pair.value
+  }
+  return { envVars, secretEnvVars }
 }
 
 export function DeployForm() {
+  const compact = useCompactLayout()
+  const [open, setOpen] = useState(false)
   const [url, setUrl] = useState('')
+  const deferredUrl = useDeferredValue(url.trim())
+  const [branch, setBranch] = useState('main')
+  const [branches, setBranches] = useState<string[]>([])
+  const [branchLookup, setBranchLookup] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+  const [branchLookupError, setBranchLookupError] = useState('')
   const [pairs, setPairs] = useState<EnvPair[]>([])
   const [pasteMode, setPasteMode] = useState(false)
   const [pasteText, setPasteText] = useState('')
-  const [showEnv, setShowEnv] = useState(false)
+  const [attachPostgres, setAttachPostgres] = useState(false)
+  const [attachRedis, setAttachRedis] = useState(false)
+  const [persistRedis, setPersistRedis] = useState(false)
   const { mutate, isPending, error } = useCreateDeployment()
+
+  const reset = () => {
+    setUrl('')
+    setBranch('main')
+    setBranches([])
+    setBranchLookup('idle')
+    setBranchLookupError('')
+    setPairs([])
+    setPasteText('')
+    setPasteMode(false)
+    setAttachPostgres(false)
+    setAttachRedis(false)
+    setPersistRedis(false)
+  }
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
     const trimmed = url.trim()
     if (!trimmed) return
+
     const envPairs = pasteMode ? parseEnvFile(pasteText) : pairs
-    const envVars = pairsToRecord(envPairs)
+    const { envVars, secretEnvVars } = splitPairs(envPairs)
+    const addons: Array<{ type: 'postgres' | 'redis'; persistent?: boolean }> = []
+    if (attachPostgres) addons.push({ type: 'postgres', persistent: true })
+    if (attachRedis) addons.push({ type: 'redis', persistent: persistRedis })
+
     mutate(
-      { gitUrl: trimmed, envVars: Object.keys(envVars).length ? envVars : undefined },
-      { onSuccess: () => { setUrl(''); setPairs([]); setPasteText('') } },
+      {
+        gitUrl: trimmed,
+        ...(branch.trim() ? { branch: branch.trim() } : {}),
+        ...(Object.keys(envVars).length ? { envVars } : {}),
+        ...(Object.keys(secretEnvVars).length ? { secretEnvVars } : {}),
+        ...(addons.length ? { addons } : {}),
+      },
+      {
+        onSuccess: () => {
+          reset()
+          setOpen(false)
+        },
+      },
     )
   }
 
-  const addPair = () => setPairs((p) => [...p, { key: '', value: '' }])
-  const removePair = (i: number) => setPairs((p) => p.filter((_, idx) => idx !== i))
-  const updatePair = (i: number, field: 'key' | 'value', val: string) =>
-    setPairs((p) => p.map((pair, idx) => idx === i ? { ...pair, [field]: val } : pair))
+  const envPairs = pasteMode ? parseEnvFile(pasteText) : pairs
+  const envCount = envPairs.filter((pair) => pair.key.trim()).length
+  const secretCount = envPairs.filter((pair) => pair.key.trim() && pair.secret).length
+  const branchOptions = branch && !branches.includes(branch) ? [branch, ...branches] : branches
 
-  const envCount = (pasteMode ? parseEnvFile(pasteText) : pairs).filter((p) => p.key).length
+  const addPair = () => setPairs((prev) => [...prev, { key: '', value: '', secret: false }])
+  const removePair = (i: number) => setPairs((prev) => prev.filter((_, idx) => idx !== i))
+  const updatePair = (i: number, field: 'key' | 'value', value: string) =>
+    setPairs((prev) => prev.map((pair, idx) => idx === i ? { ...pair, [field]: value } : pair))
+  const toggleSecret = (i: number) =>
+    setPairs((prev) => prev.map((pair, idx) => idx === i ? { ...pair, secret: !pair.secret } : pair))
+
+  useEffect(() => {
+    if (!deferredUrl || !/^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\//i.test(deferredUrl)) {
+      setBranches([])
+      setBranchLookup('idle')
+      setBranchLookupError('')
+      return
+    }
+
+    let cancelled = false
+    setBranches([])
+    setBranchLookup('loading')
+    setBranchLookupError('')
+
+    const timer = window.setTimeout(() => {
+      api.repositories.branches(deferredUrl)
+        .then(({ branches: nextBranches }) => {
+          if (cancelled) return
+          setBranches(nextBranches)
+          setBranchLookup('loaded')
+          setBranch((current) => {
+            if (current.trim() && current !== 'main') return current
+            return nextBranches.includes('main') ? 'main' : nextBranches[0] ?? current
+          })
+        })
+        .catch((err: Error) => {
+          if (cancelled) return
+          setBranches([])
+          setBranchLookup('error')
+          setBranchLookupError(err.message || 'Could not load branches')
+        })
+    }, 450)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [deferredUrl])
 
   return (
-    <form onSubmit={submit} style={formStyle}>
-      {/* Input row */}
-      <div style={inputRowStyle}>
-        {/* Search-style URL input */}
-        <div style={searchWrapStyle}>
-          <Search size={15} color="var(--text-muted)" style={{ flexShrink: 0 }} />
-          <input
-            type="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://github.com/user/repo"
-            required
-            style={searchInputStyle}
-          />
-        </div>
+    <>
+      <button type="button" onClick={() => setOpen(true)} style={launchButtonStyle}>
+        <Rocket size={16} />
+        New service
+      </button>
 
-        {/* Env toggle */}
-        <button
-          type="button"
-          onClick={() => setShowEnv((v) => !v)}
-          title="Environment variables"
-          style={{
-            ...envToggleStyle,
-            background: showEnv ? 'var(--bg-hover)' : 'var(--bg-raised)',
-            borderColor: showEnv ? 'var(--border-emphasis)' : 'var(--border-subtle)',
-            color: showEnv ? 'var(--text-primary)' : 'var(--text-secondary)',
-          } as CSSProperties}
-        >
-          <SlidersHorizontal size={14} />
-          {envCount > 0 && (
-            <span style={envCountBadge}>{envCount}</span>
-          )}
-        </button>
-
-        {/* Deploy CTA */}
-        <button
-          type="submit"
-          disabled={isPending || !url.trim()}
-          style={{
-            ...deployBtnStyle,
-            opacity: isPending || !url.trim() ? 0.4 : 1,
-            cursor: isPending || !url.trim() ? 'not-allowed' : 'pointer',
-          }}
-        >
-          <Rocket size={13} />
-          {isPending ? 'Queuing…' : 'Deploy'}
-        </button>
-      </div>
-
-      {/* Env vars panel */}
-      {showEnv && (
-        <div style={envPanelStyle}>
-          {/* Panel header */}
-          <div style={envPanelHeaderStyle}>
-            <SlidersHorizontal size={12} color="var(--text-muted)" />
-            <span style={{ color: 'var(--text-secondary)' as string, fontSize: 12, fontWeight: 500 }}>
-              Environment Variables
-            </span>
-            {envCount > 0 && <span style={envCountBadge}>{envCount}</span>}
-            <div style={{ flex: 1 }} />
-            {/* Mode pills */}
-            <div style={modePillsStyle}>
-              {(['Key/Value', 'Paste .env'] as const).map((label, i) => {
-                const active = i === 0 ? !pasteMode : pasteMode
-                return (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => setPasteMode(i === 1)}
-                    style={{
-                      ...modePillStyle,
-                      background: active ? 'var(--bg-hover)' : 'transparent',
-                      color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                    } as CSSProperties}
-                  >
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {pasteMode ? (
-            <textarea
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              placeholder={'DATABASE_URL=postgres://...\nNODE_ENV=production\n# comments ignored'}
-              rows={5}
-              style={textareaStyle}
-            />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              {pairs.length === 0 && (
-                <p style={{ color: 'var(--text-muted)' as string, fontSize: 12, marginBottom: 4 }}>
-                  No variables added yet.
-                </p>
-              )}
-              {pairs.map((pair, i) => (
-                <div key={i} style={{ alignItems: 'center', display: 'flex', gap: 5 }}>
-                  <input
-                    placeholder="KEY"
-                    value={pair.key}
-                    onChange={(e) => updatePair(i, 'key', e.target.value)}
-                    style={{ ...kvInputStyle, flex: '0 0 36%' }}
-                  />
-                  <input
-                    placeholder="value"
-                    value={pair.value}
-                    onChange={(e) => updatePair(i, 'value', e.target.value)}
-                    style={{ ...kvInputStyle, flex: 1 }}
-                  />
-                  <button type="button" onClick={() => removePair(i)} style={removeVarBtnStyle}>
-                    <X size={11} />
-                  </button>
-                </div>
-              ))}
-              <button type="button" onClick={addPair} style={addVarBtnStyle}>
-                <Plus size={12} />
-                Add variable
+      {open && (
+        <div style={compact ? compactOverlayStyle : overlayStyle} role="presentation">
+          <form onSubmit={submit} style={compact ? compactModalStyle : modalStyle}>
+            <div style={compact ? compactModalHeaderStyle : modalHeaderStyle}>
+              <div>
+                <div style={modalKickerStyle}>Deploy service</div>
+                <h2 style={compact ? compactModalTitleStyle : modalTitleStyle}>Connect a repository</h2>
+              </div>
+              <button type="button" onClick={() => setOpen(false)} style={closeButtonStyle} aria-label="Close deploy modal">
+                <X size={18} />
               </button>
             </div>
-          )}
+
+            <div style={compact ? compactModalBodyStyle : modalBodyStyle}>
+              <section style={sectionStyle}>
+                <div style={sectionHeadingStyle}>
+                  <Server size={16} />
+                  Source
+                </div>
+                <label style={labelStyle}>
+                  Git repository
+                  <input
+                    type="url"
+                    required
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://github.com/org/service"
+                    style={inputStyle}
+                  />
+                </label>
+                <label style={labelStyle}>
+                  Branch
+                  <div style={branchInputWrapStyle}>
+                    <GitBranch size={15} color="var(--ink-muted)" />
+                    {branches.length > 0 ? (
+                      <select
+                        value={branch}
+                        onChange={(e) => setBranch(e.target.value)}
+                        style={branchSelectStyle}
+                        aria-label="Select repository branch"
+                      >
+                        {branchOptions.map((option) => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={branch}
+                        onChange={(e) => setBranch(e.target.value)}
+                        placeholder="main"
+                        style={branchInputStyle}
+                      />
+                    )}
+                  </div>
+                  {branchLookup === 'loading' && (
+                    <span style={branchHintStyle}>Inspecting repository branches...</span>
+                  )}
+                  {branchLookup === 'loaded' && branches.length > 0 && (
+                    <span style={branchHintStyle}>{branches.length} branches found. Pick the deploy target.</span>
+                  )}
+                  {branchLookup === 'loaded' && branches.length === 0 && (
+                    <span style={branchHintStyle}>No remote branches found. You can type one manually.</span>
+                  )}
+                  {branchLookup === 'error' && (
+                    <span style={branchErrorStyle}>
+                      Branches unavailable. Type one manually. {branchLookupError}
+                    </span>
+                  )}
+                </label>
+              </section>
+
+              <section style={sectionStyle}>
+                <div style={sectionHeadingStyle}>
+                  <Database size={16} />
+                  Resources
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAttachPostgres((value) => !value)}
+                  style={attachPostgres ? selectedResourceStyle : resourceStyle}
+                >
+                  <span style={resourceIconStyle}>PG</span>
+                  <span style={{ flex: 1 }}>
+                    <strong style={resourceTitleStyle}>PostgreSQL</strong>
+                    <span style={resourceCopyStyle}>Persistent volume and injected DATABASE_URL</span>
+                  </span>
+                  {attachPostgres && <Check size={16} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttachRedis((value) => {
+                      if (value) setPersistRedis(false)
+                      return !value
+                    })
+                  }}
+                  style={attachRedis ? selectedResourceStyle : resourceStyle}
+                >
+                  <span style={redisIconStyle}>RD</span>
+                  <span style={{ flex: 1 }}>
+                    <strong style={resourceTitleStyle}>Redis</strong>
+                    <span style={resourceCopyStyle}>Cache by default, optional append-only persistence</span>
+                  </span>
+                  {attachRedis && <Check size={16} />}
+                </button>
+                {attachRedis && (
+                  <button
+                    type="button"
+                    onClick={() => setPersistRedis((value) => !value)}
+                    style={persistRedis ? selectedPersistStyle : persistStyle}
+                  >
+                    <Zap size={14} />
+                    Append-only Redis persistence
+                  </button>
+                )}
+              </section>
+
+              <section style={sectionStyle}>
+                <div style={sectionHeadingStyle}>
+                  <KeyRound size={16} />
+                  Environment
+                  {envCount > 0 && <span style={countPillStyle}>{envCount}</span>}
+                  {secretCount > 0 && <span style={secretPillStyle}>{secretCount} secret</span>}
+                </div>
+
+                <div style={modeSwitchStyle}>
+                  <button type="button" onClick={() => setPasteMode(false)} style={!pasteMode ? activeModeStyle : modeStyle}>
+                    Key/value
+                  </button>
+                  <button type="button" onClick={() => setPasteMode(true)} style={pasteMode ? activeModeStyle : modeStyle}>
+                    Paste .env
+                  </button>
+                </div>
+
+                {pasteMode ? (
+                  <textarea
+                    value={pasteText}
+                    onChange={(e) => setPasteText(e.target.value)}
+                    placeholder={'VITE_API_URL=https://api.example.com\nAPI_TOKEN=secret'}
+                    rows={6}
+                    style={textareaStyle}
+                  />
+                ) : (
+                  <div style={envListStyle}>
+                    {pairs.length === 0 && (
+                      <button type="button" onClick={addPair} style={emptyEnvStyle}>
+                        <Plus size={16} />
+                        Add the first environment variable
+                      </button>
+                    )}
+                    {pairs.map((pair, i) => (
+                      <div key={i} style={compact ? compactEnvRowStyle : envRowStyle}>
+                        <input
+                          value={pair.key}
+                          onChange={(e) => updatePair(i, 'key', e.target.value)}
+                          placeholder="KEY"
+                          style={envKeyInputStyle}
+                        />
+                        <input
+                          value={pair.value}
+                          onChange={(e) => updatePair(i, 'value', e.target.value)}
+                          placeholder="value"
+                          type={pair.secret ? 'password' : 'text'}
+                          style={envValueInputStyle}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleSecret(i)}
+                          title={pair.secret ? 'Stored as secret' : 'Stored as plain env'}
+                          style={pair.secret ? secretToggleActiveStyle : secretToggleStyle}
+                        >
+                          {pair.secret ? <Lock size={14} /> : <Unlock size={14} />}
+                        </button>
+                        <button type="button" onClick={() => removePair(i)} style={iconButtonStyle} title="Remove variable">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    {pairs.length > 0 && (
+                      <button type="button" onClick={addPair} style={addVarStyle}>
+                        <Plus size={14} />
+                        Add variable
+                      </button>
+                    )}
+                  </div>
+                )}
+              </section>
+
+              {error && <div style={errorStyle}>{error.message}</div>}
+            </div>
+
+            <div style={compact ? compactModalFooterStyle : modalFooterStyle}>
+              <div style={guardrailStyle}>
+                <Shield size={15} />
+                HTTPS Git URLs only. Secret values stay server-side.
+              </div>
+              <button type="submit" disabled={isPending || !url.trim()} style={{
+                ...primaryButtonStyle,
+                opacity: isPending || !url.trim() ? 0.45 : 1,
+              }}>
+                <Rocket size={16} />
+                {isPending ? 'Queuing deploy' : 'Deploy service'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
-
-      {error && (
-        <p style={{ color: 'var(--danger)' as string, fontSize: 12, marginTop: 8 }}>{error.message}</p>
-      )}
-    </form>
+    </>
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+function useCompactLayout() {
+  const [compact, setCompact] = useState(() =>
+    typeof window === 'undefined' ? false : window.innerWidth < 720,
+  )
 
-const formStyle: CSSProperties = { marginBottom: 24 }
+  useEffect(() => {
+    const onResize = () => setCompact(window.innerWidth < 720)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
-const inputRowStyle: CSSProperties = {
-  alignItems: 'center',
-  display: 'flex',
-  gap: 6,
+  return compact
 }
 
-const searchWrapStyle: CSSProperties = {
+const launchButtonStyle: CSSProperties = {
   alignItems: 'center',
-  background: 'var(--bg-raised)' as string,
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 8,
-  display: 'flex',
-  flex: 1,
+  background: 'var(--ink)',
+  border: '1px solid var(--ink)',
+  borderRadius: 0,
+  color: 'var(--paper)',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 13,
+  fontWeight: 600,
   gap: 10,
-  padding: '0 14px',
-  transition: 'border-color 0.15s',
+  height: 44,
+  justifyContent: 'center',
+  letterSpacing: '0.02em',
+  padding: '0 18px',
+  textTransform: 'uppercase',
 }
 
-const searchInputStyle: CSSProperties = {
+const overlayStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'rgba(18,18,14,0.52)',
+  backdropFilter: 'blur(10px)',
+  display: 'flex',
+  inset: 0,
+  justifyContent: 'center',
+  padding: 24,
+  position: 'fixed',
+  zIndex: 100,
+}
+
+const compactOverlayStyle: CSSProperties = {
+  ...overlayStyle,
+  alignItems: 'flex-start',
+  padding: 10,
+}
+
+const modalStyle: CSSProperties = {
+  background: 'var(--panel)',
+  border: '1px solid var(--line-strong)',
+  boxShadow: '0 30px 90px rgba(10,10,8,0.28)',
+  maxHeight: 'calc(100vh - 48px)',
+  maxWidth: 880,
+  overflow: 'hidden',
+  width: '100%',
+}
+
+const compactModalStyle: CSSProperties = {
+  ...modalStyle,
+  maxHeight: 'calc(100vh - 20px)',
+}
+
+const modalHeaderStyle: CSSProperties = {
+  alignItems: 'flex-start',
+  borderBottom: '1px solid var(--line)',
+  display: 'flex',
+  justifyContent: 'space-between',
+  padding: '24px 28px',
+}
+
+const compactModalHeaderStyle: CSSProperties = {
+  ...modalHeaderStyle,
+  padding: '18px 18px',
+}
+
+const modalKickerStyle: CSSProperties = {
+  color: 'var(--blue)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  fontWeight: 700,
+  letterSpacing: '0.08em',
+  marginBottom: 8,
+  textTransform: 'uppercase',
+}
+
+const modalTitleStyle: CSSProperties = {
+  color: 'var(--ink)',
+  fontSize: 30,
+  fontWeight: 500,
+  letterSpacing: 0,
+  lineHeight: 1.05,
+}
+
+const compactModalTitleStyle: CSSProperties = {
+  ...modalTitleStyle,
+  fontSize: 27,
+}
+
+const closeButtonStyle: CSSProperties = {
+  alignItems: 'center',
   background: 'transparent',
-  border: 'none',
-  color: 'var(--text-primary)' as string,
+  border: '1px solid var(--line)',
+  color: 'var(--ink-muted)',
+  cursor: 'pointer',
+  display: 'flex',
+  height: 34,
+  justifyContent: 'center',
+  width: 34,
+}
+
+const modalBodyStyle: CSSProperties = {
+  display: 'grid',
+  gap: 18,
+  maxHeight: 'calc(100vh - 210px)',
+  overflowY: 'auto',
+  padding: 28,
+}
+
+const compactModalBodyStyle: CSSProperties = {
+  ...modalBodyStyle,
+  maxHeight: 'calc(100vh - 190px)',
+  padding: 16,
+}
+
+const sectionStyle: CSSProperties = {
+  border: '1px solid var(--line)',
+  display: 'grid',
+  gap: 14,
+  padding: 18,
+}
+
+const sectionHeadingStyle: CSSProperties = {
+  alignItems: 'center',
+  color: 'var(--ink)',
+  display: 'flex',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  fontWeight: 700,
+  gap: 8,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+}
+
+const labelStyle: CSSProperties = {
+  color: 'var(--ink-soft)',
+  display: 'grid',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 700,
+  gap: 7,
+  letterSpacing: '0.04em',
+  textTransform: 'uppercase',
+}
+
+const inputStyle: CSSProperties = {
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  color: 'var(--ink)',
+  fontFamily: 'var(--font-body)',
+  fontSize: 15,
+  height: 44,
+  outline: 'none',
+  padding: '0 13px',
+  textTransform: 'none',
+}
+
+const branchInputWrapStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  display: 'flex',
+  gap: 10,
+  height: 44,
+  padding: '0 13px',
+}
+
+const branchInputStyle: CSSProperties = {
+  background: 'transparent',
+  border: 0,
+  color: 'var(--ink)',
   flex: 1,
-  fontFamily: 'var(--font-body)' as string,
+  fontFamily: 'var(--font-mono)',
   fontSize: 14,
   outline: 'none',
-  padding: '10px 0',
 }
 
-const envToggleStyle: CSSProperties = {
-  alignItems: 'center',
-  border: '0.5px solid',
-  borderRadius: 8,
+const branchSelectStyle: CSSProperties = {
+  ...branchInputStyle,
+  appearance: 'none',
   cursor: 'pointer',
-  display: 'flex',
-  flexShrink: 0,
-  fontFamily: 'inherit',
-  gap: 5,
-  padding: '9px 12px',
-  transition: 'background 0.12s, border-color 0.12s, color 0.12s',
+  width: '100%',
 }
 
-const envCountBadge: CSSProperties = {
-  background: 'rgba(232,255,71,0.12)',
-  borderRadius: 9,
-  color: 'var(--accent)' as string,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 10,
-  fontWeight: 500,
-  padding: '1px 6px',
-}
-
-const deployBtnStyle: CSSProperties = {
-  alignItems: 'center',
-  background: 'var(--accent)' as string,
-  border: 'none',
-  borderRadius: 8,
-  color: 'var(--accent-text)' as string,
-  cursor: 'pointer',
-  display: 'flex',
-  fontFamily: 'var(--font-mono)' as string,
+const branchHintStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-body)',
   fontSize: 12,
   fontWeight: 500,
-  gap: 7,
-  padding: '10px 18px',
-  transition: 'opacity 0.15s, transform 0.1s',
-  whiteSpace: 'nowrap',
+  letterSpacing: 0,
+  lineHeight: 1.35,
+  textTransform: 'none',
 }
 
-const envPanelStyle: CSSProperties = {
-  background: 'var(--bg-surface)' as string,
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 8,
-  marginTop: 6,
+const branchErrorStyle: CSSProperties = {
+  ...branchHintStyle,
+  color: 'var(--danger)',
+}
+
+const resourceStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  color: 'var(--ink)',
+  cursor: 'pointer',
+  display: 'flex',
+  gap: 13,
+  minHeight: 66,
   padding: '12px 14px',
+  textAlign: 'left',
 }
 
-const envPanelHeaderStyle: CSSProperties = {
+const selectedResourceStyle: CSSProperties = {
+  ...resourceStyle,
+  background: 'var(--blue-soft)',
+  borderColor: 'var(--blue)',
+}
+
+const resourceIconStyle: CSSProperties = {
   alignItems: 'center',
+  background: 'var(--ink)',
+  color: 'var(--paper)',
   display: 'flex',
-  gap: 8,
-  marginBottom: 12,
-}
-
-const modePillsStyle: CSSProperties = {
-  background: 'var(--bg-raised)' as string,
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 6,
-  display: 'flex',
-  padding: 2,
-}
-
-const modePillStyle: CSSProperties = {
-  border: 'none',
-  borderRadius: 4,
-  cursor: 'pointer',
-  fontFamily: 'var(--font-body)' as string,
+  fontFamily: 'var(--font-mono)',
   fontSize: 11,
-  fontWeight: 500,
-  padding: '3px 10px',
-  transition: 'background 0.1s, color 0.1s',
+  fontWeight: 700,
+  height: 30,
+  justifyContent: 'center',
+  width: 34,
 }
 
-const kvInputStyle: CSSProperties = {
-  background: 'var(--bg-raised)' as string,
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 6,
-  color: 'var(--text-primary)' as string,
-  fontFamily: 'var(--font-mono)' as string,
+const redisIconStyle: CSSProperties = {
+  ...resourceIconStyle,
+  background: 'var(--amber)',
+  color: 'var(--ink)',
+}
+
+const resourceTitleStyle: CSSProperties = {
+  display: 'block',
+  fontSize: 14,
+  fontWeight: 600,
+  marginBottom: 3,
+}
+
+const resourceCopyStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  display: 'block',
   fontSize: 12,
-  outline: 'none',
-  padding: '7px 10px',
-  transition: 'border-color 0.15s',
+  lineHeight: 1.35,
+}
+
+const persistStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'var(--paper)',
+  border: '1px dashed var(--line-strong)',
+  color: 'var(--ink-muted)',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  fontWeight: 700,
+  gap: 8,
+  height: 38,
+  justifyContent: 'center',
+  textTransform: 'uppercase',
+}
+
+const selectedPersistStyle: CSSProperties = {
+  ...persistStyle,
+  background: 'rgba(255,178,79,0.18)',
+  borderColor: 'var(--amber)',
+  color: 'var(--ink)',
+}
+
+const modeSwitchStyle: CSSProperties = {
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  display: 'flex',
+  padding: 3,
+  width: 'fit-content',
+}
+
+const modeStyle: CSSProperties = {
+  background: 'transparent',
+  border: 0,
+  color: 'var(--ink-muted)',
+  cursor: 'pointer',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 700,
+  padding: '7px 12px',
+  textTransform: 'uppercase',
+}
+
+const activeModeStyle: CSSProperties = {
+  ...modeStyle,
+  background: 'var(--ink)',
+  color: 'var(--paper)',
+}
+
+const countPillStyle: CSSProperties = {
+  background: 'var(--lime)',
+  color: 'var(--ink)',
+  fontSize: 10,
+  padding: '2px 6px',
+}
+
+const secretPillStyle: CSSProperties = {
+  background: 'var(--ink)',
+  color: 'var(--paper)',
+  fontSize: 10,
+  padding: '2px 6px',
 }
 
 const textareaStyle: CSSProperties = {
-  background: 'var(--bg-raised)' as string,
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 6,
-  color: 'var(--text-primary)' as string,
-  fontFamily: 'var(--font-mono)' as string,
-  fontSize: 12,
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  color: 'var(--ink)',
+  fontFamily: 'var(--font-code)',
+  fontSize: 13,
+  lineHeight: 1.6,
   outline: 'none',
-  padding: '9px 12px',
+  padding: 12,
   resize: 'vertical',
   width: '100%',
 }
 
-const removeVarBtnStyle: CSSProperties = {
-  alignItems: 'center',
-  background: 'none',
-  border: '0.5px solid var(--border-subtle)' as string,
-  borderRadius: 6,
-  color: 'var(--text-muted)' as string,
-  cursor: 'pointer',
-  display: 'flex',
-  padding: '0 8px',
-  height: 32,
+const envListStyle: CSSProperties = {
+  display: 'grid',
+  gap: 8,
 }
 
-const addVarBtnStyle: CSSProperties = {
+const emptyEnvStyle: CSSProperties = {
   alignItems: 'center',
-  alignSelf: 'flex-start',
-  background: 'none',
-  border: 'none',
-  color: 'var(--text-muted)' as string,
+  background: 'var(--paper)',
+  border: '1px dashed var(--line-strong)',
+  color: 'var(--ink-muted)',
   cursor: 'pointer',
   display: 'flex',
-  fontFamily: 'var(--font-body)' as string,
+  fontFamily: 'var(--font-mono)',
   fontSize: 12,
-  gap: 5,
-  marginTop: 4,
-  padding: '3px 0',
-  transition: 'color 0.15s',
+  fontWeight: 700,
+  gap: 8,
+  height: 44,
+  justifyContent: 'center',
+  textTransform: 'uppercase',
+}
+
+const envRowStyle: CSSProperties = {
+  display: 'grid',
+  gap: 8,
+  gridTemplateColumns: 'minmax(150px, 0.9fr) minmax(180px, 1.2fr) 40px 40px',
+}
+
+const compactEnvRowStyle: CSSProperties = {
+  ...envRowStyle,
+  gridTemplateColumns: '1fr',
+}
+
+const envKeyInputStyle: CSSProperties = {
+  ...inputStyle,
+  fontFamily: 'var(--font-code)',
+  fontSize: 13,
+  height: 40,
+}
+
+const envValueInputStyle: CSSProperties = {
+  ...envKeyInputStyle,
+}
+
+const secretToggleStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  color: 'var(--ink-muted)',
+  cursor: 'pointer',
+  display: 'flex',
+  height: 40,
+  justifyContent: 'center',
+}
+
+const secretToggleActiveStyle: CSSProperties = {
+  ...secretToggleStyle,
+  background: 'var(--ink)',
+  borderColor: 'var(--ink)',
+  color: 'var(--paper)',
+}
+
+const iconButtonStyle: CSSProperties = {
+  ...secretToggleStyle,
+}
+
+const addVarStyle: CSSProperties = {
+  alignItems: 'center',
+  background: 'transparent',
+  border: 0,
+  color: 'var(--blue)',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+  fontWeight: 700,
+  gap: 6,
+  justifySelf: 'start',
+  padding: '7px 0',
+  textTransform: 'uppercase',
+}
+
+const errorStyle: CSSProperties = {
+  background: 'rgba(210,67,67,0.09)',
+  border: '1px solid rgba(210,67,67,0.22)',
+  color: 'var(--danger)',
+  fontSize: 13,
+  padding: 12,
+}
+
+const modalFooterStyle: CSSProperties = {
+  alignItems: 'center',
+  borderTop: '1px solid var(--line)',
+  display: 'flex',
+  gap: 18,
+  justifyContent: 'space-between',
+  padding: '18px 28px',
+}
+
+const compactModalFooterStyle: CSSProperties = {
+  ...modalFooterStyle,
+  alignItems: 'stretch',
+  flexDirection: 'column',
+  padding: '16px 18px',
+}
+
+const guardrailStyle: CSSProperties = {
+  alignItems: 'center',
+  color: 'var(--ink-muted)',
+  display: 'flex',
+  fontSize: 12,
+  gap: 8,
+}
+
+const primaryButtonStyle: CSSProperties = {
+  ...launchButtonStyle,
+  minWidth: 170,
 }

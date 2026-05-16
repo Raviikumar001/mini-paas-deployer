@@ -5,7 +5,9 @@ import { logEmitter, type PipelineEvent } from '../lib/emitter.js'
 
 export const logsRoute = new Hono()
 
-const TERMINAL = new Set(['running', 'failed', 'stopped'])
+const TERMINAL = new Set(['failed', 'stopped'])
+// 'running' is intentionally excluded — the SSE stream stays open
+// to stream runtime container logs (docker logs --follow).
 
 
 logsRoute.get('/:id/logs', (c) => {

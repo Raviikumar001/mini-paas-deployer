@@ -24,12 +24,29 @@ export function useCreateDeployment() {
 export function useRedeployment() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, envVars }: { id: string; envVars?: Record<string, string> }) =>
-      api.deployments.redeploy(id, envVars),
+    mutationFn: ({
+      id,
+      envVars,
+      secretEnvVars,
+    }: {
+      id: string
+      envVars?: Record<string, string>
+      secretEnvVars?: Record<string, string>
+    }) => api.deployments.redeploy(id, envVars, secretEnvVars),
     onSuccess: (updated) => {
       qc.setQueryData<Deployment[]>(DEPLOYMENTS_KEY, (prev = []) =>
         prev.map((d) => (d.id === updated.id ? updated : d)),
       )
+    },
+  })
+}
+
+export function usePromoteDeployment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deployments.promote(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: DEPLOYMENTS_KEY })
     },
   })
 }

@@ -7,29 +7,8 @@
     "http": {
       "servers": {
         "srv0": {
-          "listen": [":80"],
-          "routes": [
-            {
-              "@id": "api",
-              "match": [{ "host": ["localhost"], "path": ["/api/*"] }],
-              "handle": [
-                {
-                  "handler": "reverse_proxy",
-                  "upstreams": [{ "dial": "backend:3001" }]
-                }
-              ]
-            },
-            {
-              "@id": "frontend",
-              "match": [{ "host": ["localhost"] }],
-              "handle": [
-                {
-                  "handler": "reverse_proxy",
-                  "upstreams": [{ "dial": "frontend:5173" }]
-                }
-              ]
-            }
-          ]
+          "listen": [":80", ":443"],
+          "routes": []
         }
       }
     }

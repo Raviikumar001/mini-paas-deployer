@@ -1,12 +1,27 @@
-# Brimble Deployment Pipeline
+# nobuild
 
-A self-contained deployment platform: paste a Git URL, get a running container behind Caddy. One page, one API, one `docker compose up`.
+`nobuild` is a local-first developer platform prototype. Paste a public GitHub repo, and it will build, deploy, observe, and redeploy the service behind a clean control plane.
+
+The project is aimed at the same product space Encore cares about: reducing DevOps overhead for application engineers by turning deploys, environments, observability, and operational workflows into one coherent platform experience. It does that in a smaller local/Docker-first form factor instead of Encore's cloud-account automation model.
+
+## What this demonstrates
+
+- Self-serve deployments from Git without hand-written per-app infrastructure
+- Preview environment workflows tied to branches and pull requests
+- Zero-downtime redeploys for existing services
+- Deployment timelines, health history, and runtime metrics in one interface
+- Persistent add-ons for common resources like PostgreSQL and Redis
+- A product-oriented platform UX instead of a pile of scripts
+
+## Project status
+
+This is a strong prototype, not a finished production platform. The core workflows are real and usable, but there are still deliberate tradeoffs around deploy speed, local-only assumptions, and depth of observability.
 
 ## Quick start
 
 ```bash
-git clone <this-repo>
-cd brimble
+git clone git@github.com:owner/repo.git
+cd nobuild
 docker compose up --build
 ```
 
@@ -17,7 +32,6 @@ Open **http://localhost**, paste a public Git URL, click Deploy.
 - Open `http://localhost`.
 - Do **not** open port `5173` directly.
 - `5173` is the frontend container's internal Vite server; Caddy is the public ingress on port `80` and routes both UI and API traffic.
-- This project is documented for local Docker Compose usage; it is not presented here as an EC2-hosted deployment.
 
 > **Prerequisites:** Docker with BuildKit support (Docker Desktop or Engine ≥ 23). No other accounts or tools required.
 
@@ -29,6 +43,33 @@ The `sample-app/` directory is a minimal Node HTTP server that reads `process.en
 2. Paste that URL into the UI.
 
 Or use any public Node.js/Go/Python repo that reads `PORT` from the environment — Railpack auto-detects the stack.
+
+---
+
+## Core capabilities
+
+- **One-page frontend** built with Vite + TanStack Router + TanStack Query
+- **Git-based deployments** — paste a URL, backend clones, builds, and runs it
+- **Deployment lifecycle** — `pending` → `building` → `deploying` → `running`, with `failed`, `stopped`, and `redeploying` states tracked in SQLite
+- **Live log streaming** to the browser over SSE, with scroll-back of persisted logs
+- **Zero-downtime redeploys** — old container keeps serving while the new image builds; Caddy upstream is atomically swapped once the new container is healthy
+- **Startup reconciliation** — if the backend restarts, live containers are re-registered in Caddy and stale statuses are cleaned up
+- **Build cache reuse** via Railpack cache keying
+- **Repository mirror cache** — repeat deploys refresh a persistent Git mirror under `/data/repo-cache` before cloning, which reduces unnecessary network transfer on the hot path
+- **Environment variables** — pass runtime and build-time env vars (e.g. `NEXT_PUBLIC_*`, `VITE_*`) via the UI
+- **Branch-based / preview deployments** — deploy any branch (not just `main`). Non-main branches get their own subdomain like `feature-auth-my-app-a4f0.localhost`
+- **PostgreSQL & Redis sidecars** — attach Postgres and/or Redis containers to any deployment with one click. `DATABASE_URL` and `REDIS_URL` are injected automatically
+- **GitHub webhook** — `POST /api/webhook/github` triggers redeploys on push events, or creates new preview deployments for unseen branches
+
+## Performance work
+
+The biggest contributor to slow deploys is image build and application cold start, not the TypeScript control plane itself. To make that visible and improve repeat deploys:
+
+- each deployment now records `clone`, `build`, `deploy`, and `total pipeline` timings
+- repeat deploys reuse both the Railpack/BuildKit cache and a persistent Git mirror cache
+- the `System` tab surfaces those timings so you can compare first deploys vs warm redeploys
+
+This means the right next optimization target is the build strategy, not rewriting the orchestration layer in another language.
 
 ---
 
@@ -50,22 +91,23 @@ BuildKit  (moby/buildkit, TCP :1234)
   └── Railpack sends build instructions here
 
 Deployed containers
-  └── Joined to brimble_net — Caddy resolves them by container name
+  └── Joined to nobuild_net — Caddy resolves them by container name
 ```
 
 ### How a deployment flows
 
 ```
-POST /api/deployments { gitUrl }
+POST /api/deployments { gitUrl, branch?, addons? }
   ↓ 202 + { id }          ← client opens SSE immediately
 
-  git clone --depth=1 <url>
+  [start PostgreSQL / Redis sidecars if requested]
+  git clone --depth=1 --branch <branch> <url>
   ┌─ railpack info → detect PORT (fallback: 3000)  ─┐  run in parallel:
-  └─ railpack build --name brimble-<id>:latest      ─┘  both only read srcPath
-  docker run -d --name dep-<id> --network brimble_net --env PORT=<port>
+  └─ railpack build --name nobuild-<id>:latest      ─┘  both only read srcPath
+  docker run -d --name dep-<id> --network nobuild_net --env PORT=<port> --env DATABASE_URL=... --env REDIS_URL=...
   TCP probe dep-<id>:<port>  ← poll every 400ms, up to 60s
   POST caddy:2019/config/…/routes  ← add @id-tagged host route for <subdomain>.localhost
-  status → running, url → http://<name-slug>-<4char-id>.localhost
+  status → running, url → http://<branch-><name-slug>-<4char-id>.localhost
 ```
 
 `<name-slug>` is a URL-safe lowercased version of the deployment name (e.g. `my-app-a4f0.localhost`). The `@id` tag (`dep-<deploymentId>`) is used internally so deletion and upstream patching need only a single Caddy API call.
@@ -90,9 +132,44 @@ PATCH /api/deployments/:id/redeploy
 
 If the build or probe fails, the old container is left untouched and the deployment is marked `failed` — users never see a gap in service.
 
+### GitHub webhook
+
+```
+POST /api/webhook/github
+  ↓ parse push or pull_request payload
+  ↓ extract repo URL + branch
+  ↓ existing deployment for repo#branch ?
+     yes → trigger redeploy (zero-downtime)
+     no  → create new deployment
+```
+
+Test locally with curl:
+
+```bash
+curl -X POST http://localhost/api/webhook/github \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ref": "refs/heads/staging",
+    "repository": { "clone_url": "https://github.com/user/repo", "name": "repo" },
+    "head_commit": { "id": "abc123", "message": "wip" }
+  }'
+```
+
+For production-like webhook testing, set `GITHUB_WEBHOOK_SECRET` to the same value configured in GitHub. When this variable is present, the backend requires a valid `X-Hub-Signature-256` HMAC signature. When it is absent, unsigned webhooks are accepted for local development.
+
+### Add-on data lifecycle
+
+PostgreSQL sidecars use named Docker volumes by default, so database data survives app redeploys and sidecar restarts. Redis sidecars are cache-only by default, but can be started with append-only persistence when requested from the UI.
+
+Deleting a deployment removes the app container, Caddy route, and sidecar containers. Data volumes are preserved by default. To remove add-on data as well, call:
+
+```bash
+curl -X DELETE 'http://localhost/api/deployments/<id>?deleteData=true'
+```
+
 ---
 
-## Key design decisions
+## Why these choices
 
 **Hono over Express**  
 Hono has native `streamSSE` support, ships a tiny footprint, and runs on Web Standards. No middleware gymnastics for streaming.
@@ -104,13 +181,16 @@ Synchronous API maps cleanly onto the pipeline model — no async plumbing for s
 Log streaming is one-directional (server → client). SSE is simpler, works natively in browsers without a library, and survives HTTP/1.1 proxies including Caddy.
 
 **Caddy JSON config (not Caddyfile)**  
-The JSON admin API lets us insert and delete routes at runtime without a reload. Each deployment gets a route with an `@id` tag so deletion is a single `DELETE /id/dep-<id>` call.
+The JSON admin API lets me insert and delete routes at runtime without a reload. Each deployment gets a route with an `@id` tag so deletion is a single `DELETE /id/dep-<id>` call.
 
 **`docker-container://buildkit` for BuildKit**  
 Railpack uses the Docker socket to exec into the named `buildkit` container and connect to its unix socket — no TLS certificates required. The TCP `tcp://` scheme is buildkitd's default gRPC listener which requires mTLS in recent versions; `docker-container://` avoids that entirely and is Railpack's own recommended approach.
 
 **`--cache-key <repo-name>` on every build**  
 Railpack/BuildKit keyed caches are per-repo by default through this flag. A second deploy of the same repo reuses cached layers with no extra infrastructure.
+
+**Persistent Git mirror cache for repeat deploys**  
+Even before the container build starts, clone time adds noise to every redeploy. A bare mirror stored under `/data/repo-cache` lets the platform refresh repository state once, then reuse local Git objects on subsequent deploys.
 
 **Code-based TanStack Router (no Vite plugin)**  
 One route (`/`). File-based routing with generated `routeTree.gen.ts` adds a build step and generated file churn for zero benefit on a single-page app. Code-based setup is 20 lines.
@@ -129,52 +209,35 @@ Without this, Caddy is configured to route to a container that hasn't finished b
 |---|---|---|
 | `DATABASE_PATH` | `/data/db.sqlite` | SQLite file path |
 | `CADDY_ADMIN` | `http://caddy:2019` | Caddy admin API base URL |
-| `DOCKER_NETWORK` | `brimble_net` | Network deployed containers join |
+| `DOCKER_NETWORK` | `nobuild_net` | Network deployed containers join |
 | `BUILDKIT_HOST` | `docker-container://buildkit` | BuildKit daemon address |
+| `REPO_CACHE_DIR` | `/data/repo-cache` | Persistent Git mirror cache for repeat deploys |
 | `PORT` | `3001` | Backend port |
+| `GITHUB_WEBHOOK_SECRET` | unset | Optional GitHub webhook secret. When set, `POST /api/webhook/github` requires a valid `X-Hub-Signature-256` signature |
 
 All have sensible defaults — no `.env` file needed to run.
 
 ---
 
-## Implemented in this repository
+## Known limitations / future work
 
-- One-page frontend built with Vite + TanStack Router + TanStack Query.
-- Deployment creation from Git URL (`POST /api/deployments`).
-- Deployment listing, detail fetch, delete, and redeploy endpoints.
-- Deployment status lifecycle persisted in SQLite: `pending`, `building`, `deploying`, `running`, `redeploying`, `failed`, `stopped`.
-- Real-time log streaming to the UI over SSE (`GET /api/deployments/:id/logs`) with replay of persisted logs.
-- Railpack-based image build flow (no handwritten app Dockerfiles required for deployed apps).
-- Container runtime orchestration via Docker (`run`, stop/remove, readiness wait).
-- Dynamic Caddy ingress updates through Caddy Admin API for deployed app host routes.
-- Build cache reuse via Railpack cache keying.
-- **Zero-downtime redeploy**: old container keeps serving while the new image builds and probes; Caddy upstream is swapped atomically via a single `PATCH` to the `@id`-tagged route; old container is torn down only after the swap.
-- **Startup reconciliation**: on backend boot, live containers are re-registered in Caddy (recovering from `docker compose down`/restart), in-flight deployments are marked `failed`, and containers that exited while the server was down are marked `stopped`.
-- **Human-readable deployment URLs**: `toSubdomain()` derives a stable `<name-slug>-<4char-id>.localhost` URL from the deployment name so URLs are guessable and don't change across redeployments.
-- **Parallel port detection + image build**: `detectPort` (reads files) and `buildImage` (writes to BuildKit) share no mutable state and run concurrently via `Promise.all`, saving several seconds per deploy.
-- End-to-end local startup with a single `docker compose up --build`.
+- Build speed is improved for repeat deploys, but larger JS frameworks can still take minutes because image build and app startup remain the long pole
+- Runtime logs are tailed from running app containers, but add-on logs are not surfaced yet
+- Polling the deployment list every 3 seconds works but is a bit noisy — eventually want SSE-driven invalidation instead
+- CORS is wide open (`cors()` on `/api/*`) — should be origin-restricted for non-local use
+- Deployment URLs hardcode `.localhost` — need an env-driven base domain for real hosting
+- No build cancellation or queueing yet — overlapping heavy builds on a small machine can get rough
+- The frontend is served by Vite's dev server in the container; for real production use it should be a static build served by Caddy
+- No project upload (zip/tar) support yet — Git URL only
+- PostgreSQL sidecars are persistent and Redis can be persistent, but there is not yet a UI control for deleting retained volumes
 
 ---
 
-## What I'd do with more time
+## Cleanup note
 
-- **Project upload flow**: add uploaded project support alongside Git URL in the create deployment API and UI.
-- **Domain-aware URLs**: replace hardcoded `.localhost` deployment URLs with an env-driven base domain (for non-local hosts).
-- **Build cancellation + queueing**: add cancel endpoints and a simple worker queue to prevent overlapping heavy builds on small machines.
-- **Structured build progress**: parse build output into typed step events so the UI can show phase/timing instead of plain text lines.
-- **Production frontend serving**: switch from Vite dev server in container runtime to a built static bundle served by Caddy.
-- Right now it only shows build logs, not deploy logs, so with more time I would have like to implement it. 
+Deployed containers (`dep-*`) are created by the pipeline, not by Docker Compose. If you want to fully tear down including those:
 
-## What I'd rip out
-
-- **3-second global polling** in deployment list (`refetchInterval: 3_000`) and rely more on SSE-driven invalidation/state updates.
-- **Open CORS defaults** (`cors()` on `/api/*`) and replace with explicit allowed origins via environment config.
-- **`.localhost`-specific assumptions** in generated deployment URLs and host matching for routes intended for non-local environments.
-
----
-
-## Rough time spent, and what I'd change if I had another weekend
-
-Rough time spent: **~11 hours**.
-
-With another weekend, I would prioritize: upload deploys (zip/tar), domain/TLS hardening, and a more production-ready runtime profile (build cancellation, queueing, and static frontend serving).
+```bash
+docker ps -a --filter "name=dep-" --format "{{.Names}}" | xargs -r docker rm -f
+docker compose down
+```
