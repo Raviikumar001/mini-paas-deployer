@@ -21,8 +21,10 @@ export interface Deployment {
   pr_url: string | null
   pr_base_branch: string | null
   is_preview: number
+  clone_duration_ms: number | null
   build_duration_ms: number | null
   deploy_duration_ms: number | null
+  total_duration_ms: number | null
   last_failure_at: string | null
   last_failure_stage: string | null
   detected_language: string | null
@@ -85,6 +87,17 @@ export interface DeploymentHealthCheck {
   created_at: string
 }
 
+export interface DeploymentMetricSample {
+  id: number
+  deployment_id: string
+  cpu_pct: number | null
+  memory_used_bytes: number | null
+  memory_limit_bytes: number | null
+  network_rx_bytes: number | null
+  network_tx_bytes: number | null
+  created_at: string
+}
+
 let db: Database.Database
 
 export function getDb(): Database.Database {
@@ -111,8 +124,10 @@ export function initDb(): void {
       pr_url         TEXT,
       pr_base_branch TEXT,
       is_preview     INTEGER NOT NULL DEFAULT 0,
+      clone_duration_ms INTEGER,
       build_duration_ms INTEGER,
       deploy_duration_ms INTEGER,
+      total_duration_ms INTEGER,
       last_failure_at TEXT,
       last_failure_stage TEXT,
       detected_language TEXT,
@@ -163,6 +178,20 @@ export function initDb(): void {
 
     CREATE INDEX IF NOT EXISTS idx_deployment_health_checks_deployment
       ON deployment_health_checks(deployment_id, id);
+
+    CREATE TABLE IF NOT EXISTS deployment_metric_samples (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      deployment_id      TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+      cpu_pct            REAL,
+      memory_used_bytes  INTEGER,
+      memory_limit_bytes INTEGER,
+      network_rx_bytes   INTEGER,
+      network_tx_bytes   INTEGER,
+      created_at         TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_deployment_metric_samples_deployment
+      ON deployment_metric_samples(deployment_id, id);
   `)
 
   // Non-destructive migrations — adds columns if this is an existing DB
@@ -207,11 +236,19 @@ export function initDb(): void {
   } catch { /* column already exists */ }
 
   try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN clone_duration_ms INTEGER`)
+  } catch { /* column already exists */ }
+
+  try {
     getDb().exec(`ALTER TABLE deployments ADD COLUMN build_duration_ms INTEGER`)
   } catch { /* column already exists */ }
 
   try {
     getDb().exec(`ALTER TABLE deployments ADD COLUMN deploy_duration_ms INTEGER`)
+  } catch { /* column already exists */ }
+
+  try {
+    getDb().exec(`ALTER TABLE deployments ADD COLUMN total_duration_ms INTEGER`)
   } catch { /* column already exists */ }
 
   try {
@@ -408,4 +445,44 @@ export function getDeploymentHealthChecks(deploymentId: string, limit = 24): Dep
        LIMIT ?`,
     )
     .all(deploymentId, limit) as DeploymentHealthCheck[]
+}
+
+export function insertDeploymentMetricSample(
+  deploymentId: string,
+  sample: {
+    cpuPct: number | null
+    memoryUsedBytes: number | null
+    memoryLimitBytes: number | null
+    networkRxBytes: number | null
+    networkTxBytes: number | null
+  },
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO deployment_metric_samples (
+         deployment_id, cpu_pct, memory_used_bytes, memory_limit_bytes,
+         network_rx_bytes, network_tx_bytes, created_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      deploymentId,
+      sample.cpuPct,
+      sample.memoryUsedBytes,
+      sample.memoryLimitBytes,
+      sample.networkRxBytes,
+      sample.networkTxBytes,
+      new Date().toISOString(),
+    )
+}
+
+export function getDeploymentMetricSamples(deploymentId: string, limit = 40): DeploymentMetricSample[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM deployment_metric_samples
+       WHERE deployment_id = ?
+       ORDER BY id DESC
+       LIMIT ?`,
+    )
+    .all(deploymentId, limit) as DeploymentMetricSample[]
 }

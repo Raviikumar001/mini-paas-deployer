@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { Activity, Box, Database, Globe, HardDriveDownload, Server } from 'lucide-react'
 import type { Deployment } from '../api/client'
 import { useDeploymentHealth } from '../hooks/useDeploymentHealth'
+import { useDeploymentMetrics } from '../hooks/useDeploymentMetrics'
 
 interface Props {
   deployment: Deployment
@@ -10,7 +11,9 @@ interface Props {
 
 export function DeploymentSystem({ deployment, enabled }: Props) {
   const { data: health = [] } = useDeploymentHealth(deployment.id, enabled)
+  const { data: metrics = [] } = useDeploymentMetrics(deployment.id, enabled)
   const samples = [...health].reverse()
+  const metricSamples = [...metrics].reverse()
   const healthySamples = samples.filter((sample) => sample.ok === 1).length
   const uptime = samples.length > 0 ? Math.round((healthySamples / samples.length) * 100) : null
   const avgLatency = samples.length > 0
@@ -21,14 +24,47 @@ export function DeploymentSystem({ deployment, enabled }: Props) {
       Math.max(1, samples.filter((sample) => sample.latency_ms !== null).length),
     )
     : null
+  const latestMetric = metricSamples.at(-1) ?? metricSamples[metricSamples.length - 1]
 
   return (
     <div style={systemStyle}>
       <section style={metricsGridStyle}>
         <MetricCard label="Health uptime" value={uptime === null ? 'Pending' : `${uptime}%`} icon={<Activity size={16} />} />
         <MetricCard label="Avg latency" value={avgLatency === null ? 'n/a' : `${avgLatency}ms`} icon={<Globe size={16} />} />
+        <MetricCard label="Clone duration" value={formatDuration(deployment.clone_duration_ms)} icon={<HardDriveDownload size={16} />} />
         <MetricCard label="Build duration" value={formatDuration(deployment.build_duration_ms)} icon={<HardDriveDownload size={16} />} />
         <MetricCard label="Deploy duration" value={formatDuration(deployment.deploy_duration_ms)} icon={<Server size={16} />} />
+        <MetricCard label="Total pipeline" value={formatDuration(deployment.total_duration_ms)} icon={<Server size={16} />} />
+      </section>
+
+      <section style={panelStyle}>
+        <div style={panelHeaderStyle}>Runtime metrics</div>
+        <div style={metricsGraphGridStyle}>
+          <MetricGraphCard
+            label="CPU"
+            value={latestMetric?.cpu_pct === null || latestMetric?.cpu_pct === undefined ? 'n/a' : `${latestMetric.cpu_pct.toFixed(1)}%`}
+            series={metricSamples.map((sample) => sample.cpu_pct)}
+            formatter={(value) => `${value.toFixed(1)}%`}
+          />
+          <MetricGraphCard
+            label="Memory"
+            value={latestMetric?.memory_used_bytes ? formatBytes(latestMetric.memory_used_bytes) : 'n/a'}
+            series={metricSamples.map((sample) => sample.memory_used_bytes)}
+            formatter={(value) => formatBytes(value)}
+          />
+          <MetricGraphCard
+            label="Network in"
+            value={latestMetric?.network_rx_bytes ? formatBytes(latestMetric.network_rx_bytes) : 'n/a'}
+            series={metricSamples.map((sample) => sample.network_rx_bytes)}
+            formatter={(value) => formatBytes(value)}
+          />
+          <MetricGraphCard
+            label="Network out"
+            value={latestMetric?.network_tx_bytes ? formatBytes(latestMetric.network_tx_bytes) : 'n/a'}
+            series={metricSamples.map((sample) => sample.network_tx_bytes)}
+            formatter={(value) => formatBytes(value)}
+          />
+        </div>
       </section>
 
       <section style={panelStyle}>
@@ -91,6 +127,41 @@ function MetricCard({ label, value, icon }: { label: string; value: string; icon
   )
 }
 
+function MetricGraphCard({
+  label,
+  value,
+  series,
+  formatter,
+}: {
+  label: string
+  value: string
+  series: Array<number | null>
+  formatter: (value: number) => string
+}) {
+  const graphPoints = buildGraphPoints(series)
+  const peak = Math.max(...series.filter((sample): sample is number => sample !== null), 0)
+
+  return (
+    <div style={graphCardStyle}>
+      <div style={graphHeaderStyle}>
+        <span style={graphLabelStyle}>{label}</span>
+        <span style={graphValueStyle}>{value}</span>
+      </div>
+      {graphPoints ? (
+        <svg viewBox="0 0 220 78" preserveAspectRatio="none" style={graphStyle}>
+          <path d={graphPoints.area} fill="rgba(102,124,255,0.14)" />
+          <path d={graphPoints.line} fill="none" stroke="var(--blue)" strokeWidth="2.4" strokeLinecap="round" />
+        </svg>
+      ) : (
+        <div style={graphEmptyStyle}>Waiting for samples...</div>
+      )}
+      <div style={graphMetaStyle}>
+        {peak > 0 ? `Peak ${formatter(peak)}` : 'No samples yet'}
+      </div>
+    </div>
+  )
+}
+
 function KeyValue({ label, value }: { label: string; value: string }) {
   return (
     <div style={keyValueStyle}>
@@ -122,6 +193,36 @@ function formatDuration(ms: number | null): string {
   const seconds = ms / 1000
   if (seconds < 60) return `${seconds.toFixed(1)}s`
   return `${(seconds / 60).toFixed(1)}m`
+}
+
+function formatBytes(value: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let amount = value
+  let unit = 0
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024
+    unit += 1
+  }
+  return `${amount.toFixed(amount >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+function buildGraphPoints(series: Array<number | null>): { line: string; area: string } | null {
+  const values = series.filter((sample): sample is number => sample !== null)
+  if (values.length < 2) return null
+
+  const width = 220
+  const height = 78
+  const max = Math.max(...values, 1)
+  const step = values.length === 1 ? width : width / (values.length - 1)
+  const points = values.map((value, index) => {
+    const x = index * step
+    const y = height - ((value / max) * (height - 8)) - 4
+    return `${x},${y}`
+  })
+
+  const line = `M ${points.join(' L ')}`
+  const area = `${line} L ${width},${height} L 0,${height} Z`
+  return { line, area }
 }
 
 function timeAgo(iso: string): string {
@@ -176,6 +277,63 @@ const panelStyle: CSSProperties = {
   display: 'grid',
   gap: 14,
   padding: 16,
+}
+
+const metricsGraphGridStyle: CSSProperties = {
+  display: 'grid',
+  gap: 12,
+  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+}
+
+const graphCardStyle: CSSProperties = {
+  background: 'var(--paper)',
+  border: '1px solid var(--line)',
+  display: 'grid',
+  gap: 10,
+  padding: 12,
+}
+
+const graphHeaderStyle: CSSProperties = {
+  alignItems: 'baseline',
+  display: 'flex',
+  gap: 10,
+  justifyContent: 'space-between',
+}
+
+const graphLabelStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  fontWeight: 700,
+  textTransform: 'uppercase',
+}
+
+const graphValueStyle: CSSProperties = {
+  color: 'var(--ink)',
+  fontFamily: 'var(--font-code)',
+  fontSize: 13,
+}
+
+const graphStyle: CSSProperties = {
+  height: 78,
+  width: '100%',
+}
+
+const graphMetaStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-code)',
+  fontSize: 11,
+}
+
+const graphEmptyStyle: CSSProperties = {
+  color: 'var(--ink-muted)',
+  fontFamily: 'var(--font-mono)',
+  fontSize: 11,
+  height: 78,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  textTransform: 'uppercase',
 }
 
 const panelHeaderStyle: CSSProperties = {

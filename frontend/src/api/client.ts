@@ -19,8 +19,10 @@ export interface Deployment {
   pr_url: string | null
   pr_base_branch: string | null
   is_preview: number
+  clone_duration_ms: number | null
   build_duration_ms: number | null
   deploy_duration_ms: number | null
+  total_duration_ms: number | null
   last_failure_at: string | null
   last_failure_stage: string | null
   detected_language: string | null
@@ -91,6 +93,17 @@ export interface DeploymentHealthCheck {
   created_at: string
 }
 
+export interface DeploymentMetricSample {
+  id: number
+  deployment_id: string
+  cpu_pct: number | null
+  memory_used_bytes: number | null
+  memory_limit_bytes: number | null
+  network_rx_bytes: number | null
+  network_tx_bytes: number | null
+  created_at: string
+}
+
 // HTTP helpers ─────────────────────────────────────────────────────────────────
 
 const BASE = '/api'
@@ -123,6 +136,9 @@ export const api = {
 
     health: (id: string): Promise<DeploymentHealthCheck[]> =>
       fetch(`${BASE}/deployments/${id}/health`).then(handle<DeploymentHealthCheck[]>),
+
+    metrics: (id: string): Promise<DeploymentMetricSample[]> =>
+      fetch(`${BASE}/deployments/${id}/metrics`).then(handle<DeploymentMetricSample[]>),
 
     create: (params: {
       gitUrl: string

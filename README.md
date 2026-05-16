@@ -1,6 +1,21 @@
-# nobuild Deployment Pipeline
+# nobuild
 
-A single-page PaaS: paste a public Git URL and get a live, auto‑subdomained web app — then click to redeploy, tail logs, or tear it down. Runs locally with one command on `*.localhost`, or on any server with `*.your-domain.com`.
+`nobuild` is a local-first developer platform prototype. Paste a public GitHub repo, and it will build, deploy, observe, and redeploy the service behind a clean control plane.
+
+The project is aimed at the same product space Encore cares about: reducing DevOps overhead for application engineers by turning deploys, environments, observability, and operational workflows into one coherent platform experience. It does that in a smaller local/Docker-first form factor instead of Encore's cloud-account automation model.
+
+## What this demonstrates
+
+- Self-serve deployments from Git without hand-written per-app infrastructure
+- Preview environment workflows tied to branches and pull requests
+- Zero-downtime redeploys for existing services
+- Deployment timelines, health history, and runtime metrics in one interface
+- Persistent add-ons for common resources like PostgreSQL and Redis
+- A product-oriented platform UX instead of a pile of scripts
+
+## Project status
+
+This is a strong prototype, not a finished production platform. The core workflows are real and usable, but there are still deliberate tradeoffs around deploy speed, local-only assumptions, and depth of observability.
 
 ## Quick start
 
@@ -31,7 +46,7 @@ Or use any public Node.js/Go/Python repo that reads `PORT` from the environment 
 
 ---
 
-## Features
+## Core capabilities
 
 - **One-page frontend** built with Vite + TanStack Router + TanStack Query
 - **Git-based deployments** — paste a URL, backend clones, builds, and runs it
@@ -40,10 +55,21 @@ Or use any public Node.js/Go/Python repo that reads `PORT` from the environment 
 - **Zero-downtime redeploys** — old container keeps serving while the new image builds; Caddy upstream is atomically swapped once the new container is healthy
 - **Startup reconciliation** — if the backend restarts, live containers are re-registered in Caddy and stale statuses are cleaned up
 - **Build cache reuse** via Railpack cache keying
+- **Repository mirror cache** — repeat deploys refresh a persistent Git mirror under `/data/repo-cache` before cloning, which reduces unnecessary network transfer on the hot path
 - **Environment variables** — pass runtime and build-time env vars (e.g. `NEXT_PUBLIC_*`, `VITE_*`) via the UI
 - **Branch-based / preview deployments** — deploy any branch (not just `main`). Non-main branches get their own subdomain like `feature-auth-my-app-a4f0.localhost`
 - **PostgreSQL & Redis sidecars** — attach Postgres and/or Redis containers to any deployment with one click. `DATABASE_URL` and `REDIS_URL` are injected automatically
 - **GitHub webhook** — `POST /api/webhook/github` triggers redeploys on push events, or creates new preview deployments for unseen branches
+
+## Performance work
+
+The biggest contributor to slow deploys is image build and application cold start, not the TypeScript control plane itself. To make that visible and improve repeat deploys:
+
+- each deployment now records `clone`, `build`, `deploy`, and `total pipeline` timings
+- repeat deploys reuse both the Railpack/BuildKit cache and a persistent Git mirror cache
+- the `System` tab surfaces those timings so you can compare first deploys vs warm redeploys
+
+This means the right next optimization target is the build strategy, not rewriting the orchestration layer in another language.
 
 ---
 
@@ -163,6 +189,9 @@ Railpack uses the Docker socket to exec into the named `buildkit` container and 
 **`--cache-key <repo-name>` on every build**  
 Railpack/BuildKit keyed caches are per-repo by default through this flag. A second deploy of the same repo reuses cached layers with no extra infrastructure.
 
+**Persistent Git mirror cache for repeat deploys**  
+Even before the container build starts, clone time adds noise to every redeploy. A bare mirror stored under `/data/repo-cache` lets the platform refresh repository state once, then reuse local Git objects on subsequent deploys.
+
 **Code-based TanStack Router (no Vite plugin)**  
 One route (`/`). File-based routing with generated `routeTree.gen.ts` adds a build step and generated file churn for zero benefit on a single-page app. Code-based setup is 20 lines.
 
@@ -182,6 +211,7 @@ Without this, Caddy is configured to route to a container that hasn't finished b
 | `CADDY_ADMIN` | `http://caddy:2019` | Caddy admin API base URL |
 | `DOCKER_NETWORK` | `nobuild_net` | Network deployed containers join |
 | `BUILDKIT_HOST` | `docker-container://buildkit` | BuildKit daemon address |
+| `REPO_CACHE_DIR` | `/data/repo-cache` | Persistent Git mirror cache for repeat deploys |
 | `PORT` | `3001` | Backend port |
 | `GITHUB_WEBHOOK_SECRET` | unset | Optional GitHub webhook secret. When set, `POST /api/webhook/github` requires a valid `X-Hub-Signature-256` signature |
 
@@ -191,6 +221,7 @@ All have sensible defaults — no `.env` file needed to run.
 
 ## Known limitations / future work
 
+- Build speed is improved for repeat deploys, but larger JS frameworks can still take minutes because image build and app startup remain the long pole
 - Runtime logs are tailed from running app containers, but add-on logs are not surfaced yet
 - Polling the deployment list every 3 seconds works but is a bit noisy — eventually want SSE-driven invalidation instead
 - CORS is wide open (`cors()` on `/api/*`) — should be origin-restricted for non-local use

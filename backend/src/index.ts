@@ -8,6 +8,7 @@ import { logsRoute } from './routes/logs.js'
 import { repositoryRoutes } from './routes/repositories.js'
 import { webhookRoutes } from './routes/webhook.js'
 import { startHealthMonitor } from './services/health-monitor.js'
+import { startMetricsMonitor } from './services/metrics-monitor.js'
 import { reconcile } from './services/reconcile.js'
 import { registerStaticRoutes } from './services/caddy.js'
 
@@ -44,6 +45,7 @@ initDb()
 registerStaticRoutesWithRetry().catch((err) => console.error('caddy static routes error:', err))
 reconcile().catch((err) => console.error('reconcile error:', err))
 startHealthMonitor()
+startMetricsMonitor()
 
 const port = Number(process.env.PORT ?? 3001)
 serve({ fetch: app.fetch, port }, () => {

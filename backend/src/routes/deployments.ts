@@ -5,6 +5,7 @@ import {
   type Deployment,
   getDeploymentEvents,
   getDeploymentHealthChecks,
+  getDeploymentMetricSamples,
   getDeployment,
   findDeploymentBySourceAndBranch,
   listRecentDeploymentEvents,
@@ -60,6 +61,11 @@ async function toPublicDeployment(dep: Deployment): Promise<PublicDeployment> {
   }
 }
 
+deploymentRoutes.get('/events/recent', (c) => {
+  const limit = Number(c.req.query('limit') ?? '60')
+  return c.json(listRecentDeploymentEvents(Number.isFinite(limit) ? Math.max(1, Math.min(limit, 200)) : 60))
+})
+
 deploymentRoutes.get('/:id/events', (c) => {
   const dep = getDeployment(c.req.param('id'))
   if (!dep) return c.json({ error: 'not found' }, 404)
@@ -72,9 +78,10 @@ deploymentRoutes.get('/:id/health', (c) => {
   return c.json(getDeploymentHealthChecks(dep.id))
 })
 
-deploymentRoutes.get('/events/recent', (c) => {
-  const limit = Number(c.req.query('limit') ?? '60')
-  return c.json(listRecentDeploymentEvents(Number.isFinite(limit) ? Math.max(1, Math.min(limit, 200)) : 60))
+deploymentRoutes.get('/:id/metrics', (c) => {
+  const dep = getDeployment(c.req.param('id'))
+  if (!dep) return c.json({ error: 'not found' }, 404)
+  return c.json(getDeploymentMetricSamples(dep.id))
 })
 
 

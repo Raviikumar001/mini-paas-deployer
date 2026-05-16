@@ -1,8 +1,11 @@
 import { spawn, exec as execCb } from 'child_process'
+import { access, mkdir } from 'fs/promises'
+import { createHash } from 'crypto'
 import { promisify } from 'util'
 import { emitLog } from '../lib/emitter.js'
 
 const exec = promisify(execCb)
+const REPO_CACHE_DIR = process.env.REPO_CACHE_DIR ?? '/data/repo-cache'
 
 
 
@@ -10,10 +13,16 @@ function spawnStream(
   cmd: string,
   args: string[],
   deploymentId: string,
-  env?: NodeJS.ProcessEnv,
+  options?: {
+    env?: NodeJS.ProcessEnv
+    cwd?: string
+  },
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const proc = spawn(cmd, args, { env: env ?? process.env })
+    const proc = spawn(cmd, args, {
+      env: options?.env ?? process.env,
+      cwd: options?.cwd,
+    })
 
     const drain = (stream: 'stdout' | 'stderr') => (chunk: Buffer) => {
       for (const line of chunk.toString().split('\n').filter(Boolean)) {
@@ -30,6 +39,44 @@ function spawnStream(
   })
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function getMirrorPath(url: string): string {
+  const digest = createHash('sha1').update(url).digest('hex')
+  return `${REPO_CACHE_DIR}/${digest}.git`
+}
+
+async function ensureMirror(url: string, deploymentId: string): Promise<string | null> {
+  try {
+    await mkdir(REPO_CACHE_DIR, { recursive: true })
+    const mirrorPath = getMirrorPath(url)
+
+    if (await pathExists(mirrorPath)) {
+      emitLog(deploymentId, 'system', 'Refreshing cached repository mirror…')
+      await spawnStream('git', ['-C', mirrorPath, 'remote', 'set-url', 'origin', url], deploymentId)
+      await spawnStream('git', ['-C', mirrorPath, 'fetch', '--prune', 'origin'], deploymentId)
+      emitLog(deploymentId, 'system', 'Repository mirror refreshed.')
+      return mirrorPath
+    }
+
+    emitLog(deploymentId, 'system', 'Creating repository mirror cache…')
+    await spawnStream('git', ['clone', '--mirror', url, mirrorPath], deploymentId)
+    emitLog(deploymentId, 'system', 'Repository mirror ready.')
+    return mirrorPath
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    emitLog(deploymentId, 'system', `Mirror cache unavailable, falling back to direct clone (${message}).`)
+    return null
+  }
+}
+
 
 
 export async function cloneRepo(
@@ -43,12 +90,20 @@ export async function cloneRepo(
   },
 ): Promise<void> {
   const cloneBranch = options?.cloneBranch ?? branch
+  const mirrorPath = await ensureMirror(url, deploymentId)
   const args = ['clone', '--depth=1']
   if (cloneBranch && cloneBranch !== 'main') {
     args.push('--branch', cloneBranch)
   }
+  if (mirrorPath) {
+    args.push('--reference-if-able', mirrorPath, '--dissociate')
+  }
   args.push(url, destPath)
-  emitLog(deploymentId, 'system', `Cloning ${url}${cloneBranch && cloneBranch !== 'main' ? ` #${cloneBranch}` : ''}…`)
+  emitLog(
+    deploymentId,
+    'system',
+    `Cloning ${url}${cloneBranch && cloneBranch !== 'main' ? ` #${cloneBranch}` : ''}${mirrorPath ? ' using local mirror cache' : ''}…`,
+  )
   await spawnStream('git', args, deploymentId)
   if (options?.checkoutSha) {
     emitLog(deploymentId, 'system', `Checking out ${options.checkoutSha.slice(0, 7)}…`)
@@ -106,8 +161,10 @@ export async function buildImage(
     ['build', srcPath, '--name', imageTag, '--cache-key', cacheKey, ...envArgs],
     deploymentId,
     {
-      ...process.env,
-      BUILDKIT_HOST: process.env.BUILDKIT_HOST ?? 'docker-container://buildkit',
+      env: {
+        ...process.env,
+        BUILDKIT_HOST: process.env.BUILDKIT_HOST ?? 'docker-container://buildkit',
+      },
     },
   )
 

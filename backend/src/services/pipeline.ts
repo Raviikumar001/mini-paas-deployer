@@ -50,6 +50,7 @@ export async function runPipeline(
   let reachedRunning = false
   let currentStage = 'initialize'
   const pipelineStartedAt = Date.now()
+  let cloneStartedAt = 0
   let deployStartedAt = 0
   let buildStartedAt = 0
 
@@ -90,8 +91,14 @@ export async function runPipeline(
     recordDeploymentEvent(deploymentId, 'clone_started', 'Cloning repository', { gitUrl, branch: branch ?? 'main' })
     emitStatus(deploymentId, 'building')
     updateDeployment(deploymentId, { status: 'building' })
+    cloneStartedAt = Date.now()
     await cloneRepo(gitUrl, srcPath, deploymentId, branch, sourceRef)
-    recordDeploymentEvent(deploymentId, 'clone_completed', 'Repository cloned', { branch: branch ?? 'main' })
+    const cloneDurationMs = Date.now() - cloneStartedAt
+    updateDeployment(deploymentId, { clone_duration_ms: cloneDurationMs })
+    recordDeploymentEvent(deploymentId, 'clone_completed', 'Repository cloned', {
+      branch: branch ?? 'main',
+      cloneDurationMs,
+    })
 
     // ── 2. Detect port + build image in parallel ──────────────────────────────
     const id = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -151,6 +158,7 @@ export async function runPipeline(
       status: 'running',
       url,
       deploy_duration_ms: Date.now() - deployStartedAt,
+      total_duration_ms: Date.now() - pipelineStartedAt,
       last_failure_at: null,
       last_failure_stage: null,
     })
@@ -169,6 +177,7 @@ export async function runPipeline(
     emitStatus(deploymentId, 'failed')
     emitLog(deploymentId, 'system', `Pipeline failed: ${message}`)
     updateDeployment(deploymentId, {
+      total_duration_ms: Date.now() - pipelineStartedAt,
       last_failure_at: new Date().toISOString(),
       last_failure_stage: currentStage,
     })
@@ -210,6 +219,7 @@ export async function runRedeployPipeline(
   let reachedRunning = false
   let currentStage = 'initialize'
   const pipelineStartedAt = Date.now()
+  let cloneStartedAt = 0
   let deployStartedAt = 0
   let buildStartedAt = 0
 
@@ -253,8 +263,14 @@ export async function runRedeployPipeline(
     recordDeploymentEvent(deploymentId, 'clone_started', 'Cloning repository for redeploy', { gitUrl, branch: branch ?? 'main' })
     emitStatus(deploymentId, 'redeploying')
     updateDeployment(deploymentId, { status: 'redeploying' })
+    cloneStartedAt = Date.now()
     await cloneRepo(gitUrl, srcPath, deploymentId, branch, sourceRef)
-    recordDeploymentEvent(deploymentId, 'clone_completed', 'Fresh copy cloned', { branch: branch ?? 'main' })
+    const cloneDurationMs = Date.now() - cloneStartedAt
+    updateDeployment(deploymentId, { clone_duration_ms: cloneDurationMs })
+    recordDeploymentEvent(deploymentId, 'clone_completed', 'Fresh copy cloned', {
+      branch: branch ?? 'main',
+      cloneDurationMs,
+    })
 
     // ── 2. Detect port + build new image in parallel ──────────────────────────
     const imageTag = `nobuild-${id}:latest`
@@ -323,6 +339,7 @@ export async function runRedeployPipeline(
       container_id: containerId,
       container_name: nextContainerName,
       deploy_duration_ms: Date.now() - deployStartedAt,
+      total_duration_ms: Date.now() - pipelineStartedAt,
       last_failure_at: null,
       last_failure_stage: null,
     })
@@ -341,6 +358,7 @@ export async function runRedeployPipeline(
     emitStatus(deploymentId, 'failed')
     emitLog(deploymentId, 'system', `Redeploy failed: ${message}`)
     updateDeployment(deploymentId, {
+      total_duration_ms: Date.now() - pipelineStartedAt,
       last_failure_at: new Date().toISOString(),
       last_failure_stage: currentStage,
     })
